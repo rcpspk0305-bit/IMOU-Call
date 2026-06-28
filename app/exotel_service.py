@@ -1,0 +1,116 @@
+import time
+import logging
+import threading
+import requests
+from typing import Dict
+from app.config import Config
+from app.telegram_service import send_telegram_notification
+
+logger = logging.getLogger(__name__)
+
+# Thread-safe dictionary tracking last_call_timestamp per device_id
+_last_call_timestamps: Dict[str, float] = {}
+_lockout_lock = threading.Lock()
+
+def reset_lockout(device_id: str | None = None):
+    """Utility function to clear lockout timestamps (used mainly in tests)."""
+    with _lockout_lock:
+        if device_id:
+            _last_call_timestamps.pop(device_id, None)
+        else:
+            _last_call_timestamps.clear()
+
+def get_last_call_timestamp(device_id: str) -> float:
+    """Returns the last call timestamp for a device."""
+    with _lockout_lock:
+        return _last_call_timestamps.get(device_id, 0.0)
+
+def trigger_exotel_call(device_id: str, config: type = Config) -> dict:
+    """
+    Executes an outbound HTTP POST call to the Exotel API to trigger the custom Call Flow Applet.
+    Includes Agent Lockout protection and immediate Telegram alert notifications.
+    """
+    now = time.time()
+    lockout_window = getattr(config, "EXOTEL_CALL_LOCKOUT_SECONDS", 1800)
+
+    # 1. IMPLEMENT AN AGENT LOCKOUT: Verify at least 30 minutes passed since last call
+    with _lockout_lock:
+        last_call = _last_call_timestamps.get(device_id, 0.0)
+        elapsed = now - last_call
+
+        if last_call > 0 and elapsed < lockout_window:
+            logger.warning(
+                "AGENT LOCKOUT ACTIVE for device '%s': Last call placed %.1f seconds ago (lockout is %ds). Call suppressed.",
+                device_id, elapsed, lockout_window
+            )
+            # Send digital record to Telegram even when call is suppressed by lockout
+            send_telegram_notification(
+                f"⚠️ <b>ALERT SUPPRESSED (Agent Lockout):</b> Camera <code>{device_id}</code> is still OFFLINE! "
+                f"Last call was placed {int(elapsed)}s ago (Lockout: {lockout_window}s).",
+                config=config
+            )
+            return {
+                "success": False,
+                "reason": "agent_lockout_active",
+                "suppressed": True,
+                "elapsed_seconds": round(elapsed, 1),
+                "lockout_seconds": lockout_window
+            }
+
+        # Record timestamp for this call attempt
+        _last_call_timestamps[device_id] = now
+
+    # Requirement 4: ALERTS UPGRADE - Send Telegram text notification IMMEDIATELY alongside Exotel phone call routine
+    send_telegram_notification(
+        f"🚨 <b>CAMERA OFFLINE ALERT!</b>\n"
+        f"Camera <code>{device_id}</code> dropped offline!\n"
+        f"📞 Triggering automated Exotel voice call now...",
+        config=config
+    )
+
+    url = f"https://{config.EXOTEL_SUBDOMAIN}/v1/Accounts/{config.EXOTEL_SID}/Calls/connect.json"
+    applet_url = f"http://my.exotel.in/exoml/start_voice/{config.APP_ID}"
+
+    payload = {
+        "From": config.FROM_NUMBER,
+        "CallerId": config.CALLER_ID,
+        "Url": applet_url,
+        "CustomField": f"device_offline:{device_id}"
+    }
+
+    logger.info(
+        "Initiating Exotel call for device '%s'. Subdomain: %s, SID: %s, AppID: %s",
+        device_id, config.EXOTEL_SUBDOMAIN, config.EXOTEL_SID, config.APP_ID
+    )
+
+    try:
+        response = requests.post(
+            url,
+            data=payload,
+            auth=(config.EXOTEL_KEY, config.EXOTEL_TOKEN),
+            timeout=10
+        )
+        
+        if response.status_code in (200, 201):
+            logger.info("Exotel call triggered successfully for device '%s'. Response: %s", device_id, response.text)
+            return {
+                "success": True,
+                "status_code": response.status_code,
+                "data": response.json() if response.content else {}
+            }
+        else:
+            logger.error(
+                "Exotel API request failed for device '%s'. Status Code: %d, Response: %s",
+                device_id, response.status_code, response.text
+            )
+            return {
+                "success": False,
+                "status_code": response.status_code,
+                "error": response.text
+            }
+    except requests.RequestException as e:
+        logger.exception("Network exception encountered when triggering Exotel call for device '%s': %s", device_id, str(e))
+        return {
+            "success": False,
+            "error": str(e)
+        }
