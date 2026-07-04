@@ -1,5 +1,7 @@
 import sys
 import os
+
+# Ensure system path isolation so sub-modules in /app resolve seamlessly
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'app')))
 
@@ -7,7 +9,10 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 from supabase import create_client, Client
-# 1. Page Configuration and Layout
+
+# ==============================================================================
+# 1. PAGE CONFIGISTRATION & DESIGN THEME
+# ==============================================================================
 st.set_page_config(
     page_title="Imou-Exotel Security Dashboard",
     page_icon="🛡️",
@@ -15,10 +20,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Design System and CSS overrides for Premium Dark Aesthetics
+# Dark Aesthetic Custom Styling overrides
 st.markdown("""
 <style>
-    /* Metric styling */
     div[data-testid="stMetricValue"] {
         font-size: 2.2rem;
         font-weight: 700;
@@ -26,7 +30,6 @@ st.markdown("""
     div[data-testid="stMetricDelta"] > div {
         font-size: 1rem;
     }
-    /* Main Layout Cards styling */
     .dashboard-card {
         border-radius: 12px;
         padding: 24px;
@@ -46,17 +49,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 from app.config import Config
-
 from app.supabase_service import get_frontend_client, get_backend_service_client
 
-# Helper function to get config keys from centralized Config (which handles st.secrets / env mapping)
+# Explicit Constants matching our Production Supabase SQL constraints
+SYSTEM_STATE_UUID = "00000000-0000-0000-0000-000000000001"
+
 def get_config(key: str, default: str = "") -> str:
     val = getattr(Config, key.upper(), None)
     if val is not None:
         return str(val)
     return default
 
-# 3. Initialize Supabase Client (Service Role for data queries)
+# ==============================================================================
+# 2. CLIENT SUBSTANTIATION & BACKGROUND DAEMONS
+# ==============================================================================
 @st.cache_resource
 def get_supabase_client() -> Client:
     try:
@@ -66,10 +72,7 @@ def get_supabase_client() -> Client:
         st.stop()
 
 def start_background_workers() -> bool:
-    """
-    Fires the background poller routine exactly once using a persistent execution gate
-    so it runs headless in the background while the UI remains interactive.
-    """
+    """Fires background tracking engines inside standalone daemon threads exactly once."""
     try:
         from app.imou_poller import imou_poller
         from app.telegram_service import telegram_bot_poller
@@ -77,26 +80,27 @@ def start_background_workers() -> bool:
         imou_poller.start()
         telegram_bot_poller.start()
         return True
-    except Exception as e:
+    except Exception:
         return False
 
-# Start background monitoring loops headless exactly once
+# Initialize Background Routines
 start_background_workers()
 
 try:
     supabase = get_supabase_client()
 except Exception as e:
-    st.error(f"Failed to connect to Supabase: {str(e)}")
+    st.error(f"Failed to connect to Supabase Service Key Client: {str(e)}")
     st.stop()
 
-# Initialize public supabase client for frontend auth wrapper
 auth_supabase = None
 try:
     auth_supabase = get_frontend_client()
 except Exception as e:
-    st.error(f"Failed to initialize public Supabase authentication client: {str(e)}")
+    st.error(f"Failed to initialize public Anon Supabase auth client: {str(e)}")
 
-# 4. Authentication Session Management
+# ==============================================================================
+# 3. AUTHENTICATION CONTROLS
+# ==============================================================================
 if "user" not in st.session_state:
     st.session_state["user"] = None
 if "session_token" not in st.session_state:
@@ -104,14 +108,14 @@ if "session_token" not in st.session_state:
 
 def handle_logout():
     try:
-        supabase.auth.sign_out()
+        auth_supabase.auth.sign_out()
     except Exception:
         pass
     st.session_state["user"] = None
     st.session_state["session_token"] = None
     st.rerun()
 
-# Render Login screen if user is not authenticated
+# Enforce secure login wall
 if st.session_state["user"] is None:
     st.markdown("<h1 style='text-align: center; margin-top: 50px;'>🛡️ Imou-Exotel Monitoring Portal</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #9CA3AF;'>Authorized personnel security checkpoint</p>", unsafe_allow_html=True)
@@ -132,7 +136,7 @@ if st.session_state["user"] is None:
                     with st.spinner("Verifying credentials with database..."):
                         try:
                             if auth_supabase is None:
-                                raise Exception("Public Supabase auth client is not initialized. Please verify your Supabase url and key settings in secrets.")
+                                raise Exception("Public Anon Supabase auth client is uninitialized. Verify your variables.")
                             
                             auth_response = auth_supabase.auth.sign_in_with_password({
                                 "email": email,
@@ -149,21 +153,17 @@ if st.session_state["user"] is None:
                             error_msg = str(e)
                             st.error(f"Login process failed: {error_msg}")
                             
-                            is_invalid_credentials = False
                             if "Invalid login credentials" in error_msg:
-                                is_invalid_credentials = True
-                            if hasattr(e, "message") and "Invalid login credentials" in getattr(e, "message", ""):
-                                is_invalid_credentials = True
-                            
-                            if is_invalid_credentials:
                                 st.info(
-                                    "💡 **Troubleshooting Tip:** If you are sure your email and password are correct, "
-                                    "please check if **Confirm Email** (Email Confirmation) is disabled inside your "
-                                    "Supabase project provider panel (Authentication -> Providers -> Email -> Confirm Email)."
+                                    "💡 **Troubleshooting Tip:** If you are sure your password is correct, "
+                                    "verify that **Confirm Email** is disabled in your Supabase configuration panel "
+                                    "(Authentication -> Providers -> Email -> Confirm Email) or that your manually created user is auto-confirmed."
                                 )
     st.stop()
 
-# 5. Render Main Dashboard Panel if session token is valid
+# ==============================================================================
+# 4. ADMIN USER INTERFACE SIDEBAR PANEL
+# ==============================================================================
 st.sidebar.markdown("### 👤 User Information")
 st.sidebar.write(f"Logged in as: **{st.session_state['user'].email}**")
 st.sidebar.button("🔐 Terminate Session (Sign Out)", on_click=handle_logout, use_container_width=True)
@@ -173,31 +173,29 @@ st.sidebar.markdown("### ⚙️ System Metadata")
 st.sidebar.markdown(f"**Target Device:** `{get_config('IMOU_DEVICE_ID', 'Unconfigured')}`")
 st.sidebar.markdown(f"**Poll Interval:** `{get_config('IMOU_POLL_INTERVAL_SECONDS', '600')}s`")
 
-# Dashboard Content Header
 st.title("📊 Security & Notification Monitor Dashboard")
 st.write("Real-time telemetry and control panel interface for Imou-Exotel-Telegram services.")
 st.write("---")
 
-# Query current is_paused state from database
+# Read state with true explicit UUID parsing to eradicate Postgres 22P02 casting failures
 try:
-    state_res = supabase.table("system_state").select("is_paused").eq("id", "00000000-0000-0000-0000-000000000001").execute()
+    state_res = supabase.table("system_state").select("is_paused").eq("id", SYSTEM_STATE_UUID).execute()
     if state_res.data:
         db_paused = state_res.data[0]["is_paused"]
     else:
-        # Auto-seed initial system state if missing in the database
-        supabase.table("system_state").insert({"id": "00000000-0000-0000-0000-000000000001", "is_paused": False}).execute()
+        # Auto-seed initial structural configuration row if not present
+        supabase.table("system_state").insert({"id": SYSTEM_STATE_UUID, "is_paused": False}).execute()
         db_paused = False
 except Exception as e:
     st.error(f"Error reading status from database: {str(e)}")
     db_paused = False
 
-# Layout Structure: Left Column (Controls & State), Right Column (Metrics & Graphs)
+# Layout Structure: Split Grid
 left_col, right_col = st.columns([1, 2], gap="large")
 
 with left_col:
-    st.subheader("🛠️ Control panel")
+    st.subheader("🛠️ Control Panel")
     
-    # Render Master pause switch
     new_paused = st.toggle(
         "⏸️ Pause / Resume All Activities", 
         value=db_paused, 
@@ -205,11 +203,11 @@ with left_col:
         key="master_pause_switch"
     )
     
-    # If the user toggles the switch, push state directly to database
+    # Update mutation block syncing state back to Supabase
     if new_paused != db_paused:
-        with st.spinner("Pusing update to database..."):
+        with st.spinner("Pushing update to database..."):
             try:
-                supabase.table("system_state").update({"is_paused": new_paused}).eq("id", "00000000-0000-0000-0000-000000000001").execute()
+                supabase.table("system_state").update({"is_paused": new_paused}).eq("id", SYSTEM_STATE_UUID).execute()
                 st.toast(f"System status successfully updated to: {'PAUSED ⛔' if new_paused else 'RUNNING ✅'}")
                 st.rerun()
             except Exception as e:
@@ -223,10 +221,13 @@ with left_col:
     else:
         st.success("✅ **SYSTEM ACTIVE**: Background threads are polling camera feeds and will automatically trigger telephone and message alerts upon offline states.")
 
+# ==============================================================================
+# 5. LIVE METRICS & PLOTLY TIME HISTORY PLOT
+# ==============================================================================
 with right_col:
     st.subheader("📈 System Telemetry Metrics")
     
-    # Fetch offline events logs from the database
+    # Query database sorting by production timestamp column (triggered_at) to avoid 42703 faults
     try:
         logs_query = supabase.table("camera_logs").select("*").order("triggered_at", desc=True).limit(100).execute()
         logs_data = logs_query.data or []
@@ -234,9 +235,7 @@ with right_col:
         st.error(f"Error loading logs telemetry: {str(e)}")
         logs_data = []
 
-    # Display indicators using Streamlit columns
     total_alerts = len(logs_data)
-    
     m_col1, m_col2 = st.columns(2)
     with m_col1:
         if db_paused:
@@ -248,7 +247,7 @@ with right_col:
 
     st.write("")
     
-    # Graph Visualization with Plotly
+    # Render Plotly visual graphing frame
     if logs_data:
         df = pd.DataFrame(logs_data)
         df["triggered_at"] = pd.to_datetime(df["triggered_at"])
@@ -269,20 +268,20 @@ with right_col:
     else:
         st.info("No recorded offline alerts found in Supabase logs.")
 
-# 6. Detailed Telemetry Log Table
+# ==============================================================================
+# 6.INTERACTIVE HISTORICAL LOGGER DATA TABLE
+# ==============================================================================
 st.write("---")
-st.subheader("📋 Telemetry logs history (Recent 100 Alert Cycles)")
+st.subheader("📋 Telemetry Logs History (Recent 100 Alert Cycles)")
 
 if logs_data:
     df_logs = pd.DataFrame(logs_data)
     df_logs["triggered_at"] = pd.to_datetime(df_logs["triggered_at"])
     
-    # Combine the boolean checks for exotel_call_triggered and telegram_alert_sent into a single virtual column
-    exotel_col = df_logs["exotel_call_triggered"].fillna(False) if "exotel_call_triggered" in df_logs.columns else False
-    telegram_col = df_logs["telegram_alert_sent"].fillna(False) if "telegram_alert_sent" in df_logs.columns else False
-    df_logs["Exotel/Telegram Dispatched"] = exotel_col | telegram_col
+    # Map the dispatch notification checkboxes by combining the Exotel & Telegram states
+    df_logs["Exotel/Telegram Dispatched"] = df_logs["exotel_call_triggered"] & df_logs["telegram_alert_sent"]
     
-    # Rename columns to match specifications
+    # Clean up column structure display schemas
     df_logs = df_logs.rename(columns={
         "device_id": "Device ID",
         "event_type": "Event Type",
@@ -298,6 +297,5 @@ if logs_data:
         use_container_width=True,
         hide_index=True
     )
-
 else:
     st.info("No logs are currently stored in the database.")
