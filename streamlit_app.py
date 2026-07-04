@@ -47,6 +47,8 @@ st.markdown("""
 
 from app.config import Config
 
+from app.supabase_service import get_frontend_client, get_backend_service_client
+
 # Helper function to get config keys from centralized Config (which handles st.secrets / env mapping)
 def get_config(key: str, default: str = "") -> str:
     val = getattr(Config, key.upper(), None)
@@ -54,15 +56,14 @@ def get_config(key: str, default: str = "") -> str:
         return str(val)
     return default
 
-# 3. Initialize Supabase Client
+# 3. Initialize Supabase Client (Service Role for data queries)
 @st.cache_resource
 def get_supabase_client() -> Client:
-    url = get_config("SUPABASE_URL")
-    key = get_config("SUPABASE_KEY")
-    if not url or url == "YOUR_SUPABASE_URL" or not key or key == "YOUR_SUPABASE_SERVICE_ROLE_KEY":
-        st.warning("⚠️ Supabase credentials are missing or set to defaults. Please check your config.")
+    try:
+        return get_backend_service_client()
+    except Exception as e:
+        st.warning(f"⚠️ Service role Supabase client initialization failed: {str(e)}")
         st.stop()
-    return create_client(url, key)
 
 def start_background_workers() -> bool:
     """
@@ -87,6 +88,13 @@ try:
 except Exception as e:
     st.error(f"Failed to connect to Supabase: {str(e)}")
     st.stop()
+
+# Initialize public supabase client for frontend auth wrapper
+auth_supabase = None
+try:
+    auth_supabase = get_frontend_client()
+except Exception as e:
+    st.error(f"Failed to initialize public Supabase authentication client: {str(e)}")
 
 # 4. Authentication Session Management
 if "user" not in st.session_state:
@@ -123,7 +131,10 @@ if st.session_state["user"] is None:
                 else:
                     with st.spinner("Verifying credentials with database..."):
                         try:
-                            auth_response = supabase.auth.sign_in_with_password({
+                            if auth_supabase is None:
+                                raise Exception("Public Supabase auth client is not initialized. Please verify your Supabase url and key settings in secrets.")
+                            
+                            auth_response = auth_supabase.auth.sign_in_with_password({
                                 "email": email,
                                 "password": password
                             })
@@ -135,7 +146,21 @@ if st.session_state["user"] is None:
                             else:
                                 st.error("Authentication failed. Access Denied.")
                         except Exception as e:
-                            st.error(f"Login process failed: {str(e)}")
+                            error_msg = str(e)
+                            st.error(f"Login process failed: {error_msg}")
+                            
+                            is_invalid_credentials = False
+                            if "Invalid login credentials" in error_msg:
+                                is_invalid_credentials = True
+                            if hasattr(e, "message") and "Invalid login credentials" in getattr(e, "message", ""):
+                                is_invalid_credentials = True
+                            
+                            if is_invalid_credentials:
+                                st.info(
+                                    "💡 **Troubleshooting Tip:** If you are sure your email and password are correct, "
+                                    "please check if **Confirm Email** (Email Confirmation) is disabled inside your "
+                                    "Supabase project provider panel (Authentication -> Providers -> Email -> Confirm Email)."
+                                )
     st.stop()
 
 # 5. Render Main Dashboard Panel if session token is valid
@@ -155,12 +180,12 @@ st.write("---")
 
 # Query current is_paused state from database
 try:
-    state_res = supabase.table("system_state").select("is_paused").eq("id", 1).execute()
+    state_res = supabase.table("system_state").select("is_paused").eq("id", "00000000-0000-0000-0000-000000000001").execute()
     if state_res.data:
         db_paused = state_res.data[0]["is_paused"]
     else:
         # Auto-seed initial system state if missing in the database
-        supabase.table("system_state").insert({"id": 1, "is_paused": False}).execute()
+        supabase.table("system_state").insert({"id": "00000000-0000-0000-0000-000000000001", "is_paused": False}).execute()
         db_paused = False
 except Exception as e:
     st.error(f"Error reading status from database: {str(e)}")
@@ -184,7 +209,7 @@ with left_col:
     if new_paused != db_paused:
         with st.spinner("Pusing update to database..."):
             try:
-                supabase.table("system_state").update({"is_paused": new_paused}).eq("id", 1).execute()
+                supabase.table("system_state").update({"is_paused": new_paused}).eq("id", "00000000-0000-0000-0000-000000000001").execute()
                 st.toast(f"System status successfully updated to: {'PAUSED ⛔' if new_paused else 'RUNNING ✅'}")
                 st.rerun()
             except Exception as e:
@@ -203,7 +228,7 @@ with right_col:
     
     # Fetch offline events logs from the database
     try:
-        logs_query = supabase.table("camera_logs").select("*").order("created_at", desc=True).limit(100).execute()
+        logs_query = supabase.table("camera_logs").select("*").order("triggered_at", desc=True).limit(100).execute()
         logs_data = logs_query.data or []
     except Exception as e:
         st.error(f"Error loading logs telemetry: {str(e)}")
@@ -226,8 +251,8 @@ with right_col:
     # Graph Visualization with Plotly
     if logs_data:
         df = pd.DataFrame(logs_data)
-        df["created_at"] = pd.to_datetime(df["created_at"])
-        df["date"] = df["created_at"].dt.date
+        df["triggered_at"] = pd.to_datetime(df["triggered_at"])
+        df["date"] = df["triggered_at"].dt.date
         alert_counts = df.groupby("date").size().reset_index(name="Alerts Count")
 
         fig = px.bar(
@@ -250,14 +275,18 @@ st.subheader("📋 Telemetry logs history (Recent 100 Alert Cycles)")
 
 if logs_data:
     df_logs = pd.DataFrame(logs_data)
-    df_logs["created_at"] = pd.to_datetime(df_logs["created_at"])
+    df_logs["triggered_at"] = pd.to_datetime(df_logs["triggered_at"])
     
-    # Rename columns to match prompt specifications
+    # Combine the boolean checks for exotel_call_triggered and telegram_alert_sent into a single virtual column
+    exotel_col = df_logs["exotel_call_triggered"].fillna(False) if "exotel_call_triggered" in df_logs.columns else False
+    telegram_col = df_logs["telegram_alert_sent"].fillna(False) if "telegram_alert_sent" in df_logs.columns else False
+    df_logs["Exotel/Telegram Dispatched"] = exotel_col | telegram_col
+    
+    # Rename columns to match specifications
     df_logs = df_logs.rename(columns={
         "device_id": "Device ID",
-        "status": "Event Type",
-        "created_at": "Time Stamp",
-        "notification_sent": "Exotel/Telegram Dispatched"
+        "event_type": "Event Type",
+        "triggered_at": "Time Stamp"
     })
     
     st.dataframe(

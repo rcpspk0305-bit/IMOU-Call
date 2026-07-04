@@ -67,12 +67,15 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. Configuration (.env / streamlit/secrets.toml)
-Configure your `.env` configuration file in the project root:
+### 2. Configuration (.env / secrets.toml)
+
+#### Local Environment Configuration (`.env`)
+Configure your `.env` file in the project root:
 ```env
 # Supabase Parameters
 SUPABASE_URL=YOUR_SUPABASE_URL
 SUPABASE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
+SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 
 # Exotel Credentials & Lockout
 EXOTEL_SUBDOMAIN=api.in.exotel.com
@@ -97,7 +100,39 @@ TELEGRAM_ALLOWED_CHAT_ID=YOUR_TELEGRAM_ALLOWED_CHAT_ID
 
 # General Settings
 BUFFER_DELAY_SECONDS=180
-PORT=5000
+```
+
+#### Streamlit Secrets Configuration (`.streamlit/secrets.toml` or Streamlit Cloud Secrets Manager)
+Configure your secrets in Streamlit Cloud (or locally inside `.streamlit/secrets.toml` in your user config or project workspace):
+```toml
+[supabase]
+url = "YOUR_SUPABASE_URL"
+anon_key = "YOUR_SUPABASE_ANON_KEY"
+service_role_key = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+
+[exotel]
+subdomain = "api.in.exotel.com"
+sid = "YOUR_EXOTEL_ACCOUNT_SID"
+key = "YOUR_EXOTEL_API_KEY"
+token = "YOUR_EXOTEL_API_TOKEN"
+from_number = "YOUR_PERSONAL_VERIFIED_MOBILE"
+caller_id = "YOUR_EXOPHONE_VIRTUAL_NUMBER"
+app_id = "YOUR_EXOTEL_APP_ID"
+call_lockout_seconds = 1800
+
+[imou]
+app_id = "YOUR_IMOU_APP_ID"
+app_secret = "YOUR_IMOU_APP_SECRET"
+device_id = "YOUR_IMOU_DEVICE_ID"
+poll_interval_seconds = 600
+api_base_url = "https://openapi.easy4ip.com/openapi"
+
+[telegram]
+bot_token = "YOUR_TELEGRAM_BOT_TOKEN"
+allowed_chat_id = "YOUR_TELEGRAM_ALLOWED_CHAT_ID"
+
+[general]
+buffer_delay_seconds = 180
 ```
 
 ---

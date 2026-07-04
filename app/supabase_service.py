@@ -1,25 +1,74 @@
 import logging
+import os
 from typing import Optional, List, Dict, Any
 from supabase import create_client, Client
 from app.config import Config
 
 logger = logging.getLogger(__name__)
 
-# Initialize Supabase client
-supabase_url = Config.SUPABASE_URL
-supabase_key = Config.SUPABASE_KEY
+try:
+    import streamlit as st
+except ImportError:
+    st = None
+
+def get_frontend_client() -> Client:
+    """
+    Initializes a frontend public anon Supabase client.
+    First tries st.secrets, then falls back to Config.SUPABASE_URL and environment variables.
+    """
+    url = None
+    anon_key = None
+    if st is not None:
+        try:
+            if "supabase" in st.secrets:
+                url = st.secrets["supabase"].get("url")
+                anon_key = st.secrets["supabase"].get("anon_key")
+        except Exception:
+            pass
+            
+    if not url:
+        url = Config.SUPABASE_URL
+    if not anon_key:
+        anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
+        
+    if not url or url == "YOUR_SUPABASE_URL" or not anon_key or anon_key == "YOUR_SUPABASE_SERVICE_ROLE_KEY":
+        raise ValueError("Supabase frontend credentials (anon_key) are not configured.")
+        
+    return create_client(url, anon_key)
+
+def get_backend_service_client() -> Client:
+    """
+    Initializes an administrative service role Supabase client.
+    First tries st.secrets, then falls back to Config.SUPABASE_URL and Config.SUPABASE_KEY.
+    """
+    url = None
+    service_role_key = None
+    if st is not None:
+        try:
+            if "supabase" in st.secrets:
+                url = st.secrets["supabase"].get("url")
+                service_role_key = st.secrets["supabase"].get("service_role_key")
+        except Exception:
+            pass
+            
+    if not url:
+        url = Config.SUPABASE_URL
+    if not service_role_key:
+        service_role_key = Config.SUPABASE_KEY
+        
+    if not url or url == "YOUR_SUPABASE_URL" or not service_role_key or service_role_key == "YOUR_SUPABASE_SERVICE_ROLE_KEY":
+        raise ValueError("Supabase backend service credentials (service_role_key) are not configured.")
+        
+    return create_client(url, service_role_key)
 
 # Fallback/mock client if credentials are not configured or invalid to prevent startup crashes
 supabase_client: Optional[Client] = None
 
-if supabase_url and supabase_url != "YOUR_SUPABASE_URL" and supabase_key and supabase_key != "YOUR_SUPABASE_SERVICE_ROLE_KEY":
-    try:
-        supabase_client = create_client(supabase_url, supabase_key)
-        logger.info("Supabase client initialized successfully.")
-    except Exception as e:
-        logger.exception("Failed to initialize Supabase client: %s", str(e))
-else:
-    logger.warning("Supabase credentials not fully configured. Using mock/none fallback client.")
+try:
+    supabase_client = get_backend_service_client()
+    logger.info("Supabase service client initialized successfully via get_backend_service_client().")
+except Exception as e:
+    logger.warning("Could not initialize Supabase service client: %s. Using mock/none fallback client.", str(e))
 
 import time
 import random

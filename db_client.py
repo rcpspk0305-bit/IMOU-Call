@@ -4,12 +4,9 @@ import logging
 from typing import Optional
 from supabase import create_client, Client
 from app.config import Config
+from app.supabase_service import get_backend_service_client
 
 logger = logging.getLogger(__name__)
-
-# Fetch Supabase parameters from centralized Config
-SUPABASE_URL = Config.SUPABASE_URL
-SUPABASE_KEY = Config.SUPABASE_KEY
 
 class SupabaseDbClient:
     """
@@ -20,15 +17,11 @@ class SupabaseDbClient:
         self._lock = threading.Lock()
         self.client: Optional[Client] = None
         
-        # Initialize client if environment variables are configured
-        if SUPABASE_URL and SUPABASE_URL != "YOUR_SUPABASE_URL" and SUPABASE_KEY and SUPABASE_KEY != "YOUR_SUPABASE_SERVICE_ROLE_KEY":
-            try:
-                self.client = create_client(SUPABASE_URL, SUPABASE_KEY)
-                logger.info("Supabase db_client initialized successfully.")
-            except Exception as e:
-                logger.exception("Failed to initialize Supabase client inside db_client: %s", str(e))
-        else:
-            logger.warning("Supabase credentials not configured in environment. Using fallback mode.")
+        try:
+            self.client = get_backend_service_client()
+            logger.info("Supabase db_client initialized successfully via get_backend_service_client().")
+        except Exception as e:
+            logger.warning("Supabase credentials not configured for db_client: %s. Using fallback mode.", str(e))
 
     def get_system_paused(self, fallback: bool = False) -> bool:
         """
