@@ -105,7 +105,20 @@ PORT=5000
 
 ---
 
+## 📊 Database Initialization & Setup
+
+Before running the application, you must scaffold your database tables in the Supabase workspace:
+1. Open your project dashboard in the **Supabase Console**.
+2. Navigate to the **SQL Editor** tab.
+3. Copy the contents of the database setup script [supabase_schema.sql](file:///C:/Users/rc821/OneDrive/Desktop/imou-exotel-agent/supabase_schema.sql) and paste them into the SQL query window.
+4. Click **Run** to execute the script. This will create:
+   - The `system_state` table (and insert the initial default status row with `id = 1` and `is_paused = FALSE`).
+   - The `camera_logs` table (to record camera drop telemetry alerts).
+
+---
+
 ## 🏃 Running the Application
+
 
 ### 1. Running the Background Agent (Flask Daemon)
 ```bash
