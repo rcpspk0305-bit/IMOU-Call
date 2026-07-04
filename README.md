@@ -18,12 +18,9 @@ graph TD
     B -->|Send Alert Messages| G[Telegram Bot API]
 ```
 
-### 1. Flask Daemon Agent (Production Entry: [app.py](file:///C:/Users/rc821/OneDrive/Desktop/imou-exotel-agent/app.py))
-- **Active Background Polling**: Monitors device telemetry feeds via the Imou Open API on a default 10-minute cycle (`IMOU_POLL_INTERVAL_SECONDS=600`).
+### 1. Pure Streamlit Application (Production Entry: [streamlit_app.py](file:///C:/Users/rc821/OneDrive/Desktop/imou-exotel-agent/streamlit_app.py))
+- **Autonomous Background Polling**: Monitors device telemetry feeds via the Imou Open API on a default 10-minute cycle (`IMOU_POLL_INTERVAL_SECONDS=600`).
 - **Dynamic Database State Checks**: Integrates with [app/lifecycle.py](file:///C:/Users/rc821/OneDrive/Desktop/imou-exotel-agent/app/lifecycle.py) to read and write system pause flags directly to the Supabase database.
-- **Webhook Endpoint**: Hosts a blueprint endpoint mapping IoT notifications to safety buffers preventing false alarms.
-
-### 2. Streamlit Dashboard Frontend ([dashboard.py](file:///C:/Users/rc821/OneDrive/Desktop/imou-exotel-agent/dashboard.py))
 - **Secure Gateway Checkpoint**: Implements user authentication using the Supabase Auth protocol (`supabase.auth.sign_in_with_password`). No operational data is rendered unless a valid session token is stored in Streamlit local session state.
 - **Telemetry Visualizations**: Renders a Plotly-backed bar chart showing daily camera offline counts, alongside interactive metrics showing current state.
 - **Master Pause Switch**: A toggle control updating `public.system_state` inside Supabase, immediately honoring commands system-wide.
@@ -119,17 +116,11 @@ Before running the application, you must scaffold your database tables in the Su
 
 ## 🏃 Running the Application
 
-
-### 1. Running the Background Agent (Flask Daemon)
+### Running the Streamlit Application (Dashboard & Background Daemons)
 ```bash
-python app.py
+streamlit run streamlit_app.py
 ```
-This runs the Flask API server and spawns background polling/telegram threads.
-
-### 2. Running the Streamlit Dashboard UI
-```bash
-streamlit run dashboard.py
-```
+This runs the Streamlit UI dashboard and autonomously spawns the background camera monitoring and Telegram bot daemon threads.
 
 ---
 

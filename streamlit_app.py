@@ -218,7 +218,7 @@ with right_col:
     with m_col2:
         st.metric("Recorded Alert Records (Last 100)", total_alerts, delta="-0 (Offline events)", delta_color="off")
 
-    st.write("")
+st.write("")
     
     # Graph Visualization with Plotly
     if logs_data:
