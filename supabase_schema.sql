@@ -12,8 +12,8 @@ INSERT INTO system_state (id, is_paused)
 VALUES (1, FALSE) 
 ON CONFLICT (id) DO NOTHING;
 
--- Create the logs table to capture offline alert records
-CREATE TABLE IF NOT EXISTS logs (
+-- Create the camera_logs table to capture offline alert records
+CREATE TABLE IF NOT EXISTS camera_logs (
     id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     device_id VARCHAR(255) NOT NULL,
@@ -21,3 +21,4 @@ CREATE TABLE IF NOT EXISTS logs (
     message TEXT NOT NULL,
     notification_sent BOOLEAN DEFAULT TRUE
 );
+

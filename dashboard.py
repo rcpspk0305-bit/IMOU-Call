@@ -181,7 +181,7 @@ with right_col:
     
     # Fetch offline events logs from the database
     try:
-        logs_query = supabase.table("logs").select("*").order("created_at", desc=True).limit(100).execute()
+        logs_query = supabase.table("camera_logs").select("*").order("created_at", desc=True).limit(100).execute()
         logs_data = logs_query.data or []
     except Exception as e:
         st.error(f"Error loading logs telemetry: {str(e)}")
@@ -230,17 +230,23 @@ if logs_data:
     df_logs = pd.DataFrame(logs_data)
     df_logs["created_at"] = pd.to_datetime(df_logs["created_at"])
     
+    # Rename columns to match prompt specifications
+    df_logs = df_logs.rename(columns={
+        "device_id": "Device ID",
+        "status": "Event Type",
+        "created_at": "Time Stamp",
+        "notification_sent": "Exotel/Telegram Dispatched"
+    })
+    
     st.dataframe(
-        df_logs[["created_at", "device_id", "status", "message", "notification_sent"]],
+        df_logs[["Device ID", "Event Type", "Time Stamp", "Exotel/Telegram Dispatched"]],
         column_config={
-            "created_at": st.column_config.DatetimeColumn("Trigger Timestamp", format="YYYY-MM-DD HH:mm:ss"),
-            "device_id": "Camera Identifier",
-            "status": "Event Status",
-            "message": "Detailed Alert Description",
-            "notification_sent": st.column_config.CheckboxColumn("Notification Sent")
+            "Time Stamp": st.column_config.DatetimeColumn("Time Stamp", format="YYYY-MM-DD HH:mm:ss"),
+            "Exotel/Telegram Dispatched": st.column_config.CheckboxColumn("Exotel/Telegram Dispatched")
         },
         use_container_width=True,
         hide_index=True
     )
+
 else:
     st.info("No logs are currently stored in the database.")

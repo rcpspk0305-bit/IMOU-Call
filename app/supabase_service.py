@@ -57,14 +57,15 @@ def get_system_paused(fallback: bool = False) -> bool:
         def op():
             return supabase_client.table("system_state").select("is_paused").eq("id", 1).execute()
         response = _execute_with_retry(op)
-        if response.data:
-            return response.data[0]["is_paused"]
+        if isinstance(response.data, list) and len(response.data) > 0:
+            return bool(response.data[0].get("is_paused", fallback))
         else:
-            # Seed the row if missing
-            logger.info("system_state row 1 not found. Seeding is_paused = False...")
-            def seed_op():
-                return supabase_client.table("system_state").insert({"id": 1, "is_paused": False}).execute()
-            _execute_with_retry(seed_op)
+            # Seed the row if missing (only if it returned a real empty list)
+            if isinstance(response.data, list):
+                logger.info("system_state row 1 not found. Seeding is_paused = False...")
+                def seed_op():
+                    return supabase_client.table("system_state").insert({"id": 1, "is_paused": False}).execute()
+                _execute_with_retry(seed_op)
     except Exception as e:
         logger.exception("Error querying is_paused state from Supabase after retries: %s", str(e))
     return fallback
@@ -80,7 +81,7 @@ def set_system_paused(paused: bool) -> bool:
         def op():
             return supabase_client.table("system_state").update({"is_paused": paused}).eq("id", 1).execute()
         response = _execute_with_retry(op)
-        if response.data:
+        if isinstance(response.data, list) and len(response.data) > 0:
             logger.info("Successfully updated database pause state to: %s", paused)
             return True
     except Exception as e:
@@ -89,7 +90,7 @@ def set_system_paused(paused: bool) -> bool:
 
 def log_camera_status(device_id: str, status: str, message: str, notification_sent: bool = True) -> bool:
     """
-    Appends a new log row to the 'logs' table to capture status changes or alerts.
+    Appends a new log row to the 'camera_logs' table to capture status changes or alerts.
     """
     if supabase_client is None:
         logger.error("Supabase client is not initialized. Cannot log status change.")
@@ -102,10 +103,10 @@ def log_camera_status(device_id: str, status: str, message: str, notification_se
             "notification_sent": notification_sent
         }
         def op():
-            return supabase_client.table("logs").insert(data).execute()
+            return supabase_client.table("camera_logs").insert(data).execute()
         response = _execute_with_retry(op)
-        if response.data:
-            logger.info("Successfully logged status change in Supabase logs.")
+        if isinstance(response.data, list) and len(response.data) > 0:
+            logger.info("Successfully logged status change in Supabase camera_logs.")
             return True
     except Exception as e:
         logger.exception("Error writing status log to Supabase after retries: %s", str(e))
@@ -120,13 +121,15 @@ def fetch_recent_logs(limit: int = 50) -> List[Dict[str, Any]]:
         return []
     try:
         def op():
-            return supabase_client.table("logs")\
+            return supabase_client.table("camera_logs")\
                 .select("*")\
                 .order("created_at", desc=True)\
                 .limit(limit)\
                 .execute()
         response = _execute_with_retry(op)
-        return response.data or []
+        if isinstance(response.data, list):
+            return response.data
+        return []
     except Exception as e:
         logger.exception("Error fetching log history from Supabase after retries: %s", str(e))
     return []
