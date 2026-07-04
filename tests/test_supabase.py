@@ -27,7 +27,7 @@ def test_get_system_paused_success(mock_supabase):
     assert get_system_paused(fallback=False) is True
     mock_supabase.table.assert_called_with("system_state")
     mock_select.select.assert_called_with("is_paused")
-    mock_eq.eq.assert_called_with("id", 1)
+    mock_eq.eq.assert_called_with("id", "00000000-0000-0000-0000-000000000001")
 
 def test_set_system_paused_unconfigured():
     with patch("app.supabase_service.supabase_client", None):
@@ -46,7 +46,7 @@ def test_set_system_paused_success(mock_supabase):
     assert set_system_paused(True) is True
     mock_supabase.table.assert_called_with("system_state")
     mock_update.update.assert_called_with({"is_paused": True})
-    mock_eq.eq.assert_called_with("id", 1)
+    mock_eq.eq.assert_called_with("id", "00000000-0000-0000-0000-000000000001")
 
 def test_log_camera_status_success(mock_supabase):
     mock_insert = MagicMock()

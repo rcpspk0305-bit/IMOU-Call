@@ -47,7 +47,7 @@ class ImouService:
         Format: md5("time:{time},nonce:{nonce},appSecret:{appSecret}")
         """
         raw_str = f"time:{system_time},nonce:{nonce},appSecret:{app_secret}"
-        return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
+        return hashlib.md5(raw_str.encode("utf-8")).hexdigest().lower()
 
     def get_access_token(self, force_refresh: bool = False) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -63,23 +63,26 @@ class ImouService:
             return self._cached_token, None
 
         url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/accessToken"
-        system_time = int(now)
-        nonce = uuid.uuid4().hex[:16]
-        sign = self._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
+        current_time = int(now)
+        import string
+        random_nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        app_secret = self.config.IMOU_APP_SECRET
+        app_id = self.config.IMOU_APP_ID
+        random_uuid_str = str(uuid.uuid4())
+
+        sign_string = f"time:{current_time},nonce:{random_nonce},appSecret:{app_secret}"
+        computed_sign = hashlib.md5(sign_string.encode('utf-8')).hexdigest().lower()
 
         payload = {
             "system": {
-                "ver": "1.1",
-                "sign": sign,
-                "appId": self.config.IMOU_APP_ID,
-                "time": system_time,
-                "nonce": nonce
+                "ver": "1.0",
+                "appId": app_id,
+                "sign": computed_sign,
+                "time": int(current_time),
+                "nonce": random_nonce
             },
-            "params": {
-                "appId": self.config.IMOU_APP_ID,
-                "appSecret": self.config.IMOU_APP_SECRET
-            },
-            "id": str(int(now))
+            "id": random_uuid_str,
+            "params": {}
         }
 
         logger.info("Fetching new Imou access token from %s", url)
@@ -138,7 +141,8 @@ class ImouService:
 
         url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/deviceOnline"
         system_time = int(time.time())
-        nonce = uuid.uuid4().hex[:16]
+        import string
+        nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
         sign = self._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
 
         payload = {

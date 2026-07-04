@@ -33,7 +33,7 @@ class SupabaseDbClient:
 
         with self._lock:
             try:
-                response = self.client.table("system_state").select("is_paused").eq("id", 1).execute()
+                response = self.client.table("system_state").select("is_paused").eq("id", "00000000-0000-0000-0000-000000000001").execute()
                 if response.data:
                     return bool(response.data[0]["is_paused"])
             except Exception as e:

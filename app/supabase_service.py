@@ -104,16 +104,16 @@ def get_system_paused(fallback: bool = False) -> bool:
         return fallback
     try:
         def op():
-            return supabase_client.table("system_state").select("is_paused").eq("id", 1).execute()
+            return supabase_client.table("system_state").select("is_paused").eq("id", "00000000-0000-0000-0000-000000000001").execute()
         response = _execute_with_retry(op)
         if isinstance(response.data, list) and len(response.data) > 0:
             return bool(response.data[0].get("is_paused", fallback))
         else:
             # Seed the row if missing (only if it returned a real empty list)
             if isinstance(response.data, list):
-                logger.info("system_state row 1 not found. Seeding is_paused = False...")
+                logger.info("system_state row 00000000-0000-0000-0000-000000000001 not found. Seeding is_paused = False...")
                 def seed_op():
-                    return supabase_client.table("system_state").insert({"id": 1, "is_paused": False}).execute()
+                    return supabase_client.table("system_state").insert({"id": "00000000-0000-0000-0000-000000000001", "is_paused": False}).execute()
                 _execute_with_retry(seed_op)
     except Exception as e:
         logger.exception("Error querying is_paused state from Supabase after retries: %s", str(e))
@@ -128,7 +128,7 @@ def set_system_paused(paused: bool) -> bool:
         return False
     try:
         def op():
-            return supabase_client.table("system_state").update({"is_paused": paused}).eq("id", 1).execute()
+            return supabase_client.table("system_state").update({"is_paused": paused}).eq("id", "00000000-0000-0000-0000-000000000001").execute()
         response = _execute_with_retry(op)
         if isinstance(response.data, list) and len(response.data) > 0:
             logger.info("Successfully updated database pause state to: %s", paused)
