@@ -1,9 +1,12 @@
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'app')))
+
 import pandas as pd
 import streamlit as st
 import plotly.express as px
 from supabase import create_client, Client
-
 # 1. Page Configuration and Layout
 st.set_page_config(
     page_title="Imou-Exotel Security Dashboard",
