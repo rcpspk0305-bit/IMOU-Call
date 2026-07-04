@@ -61,3 +61,54 @@ def test_imou_poller_skips_when_paused(mock_send):
     assert res["status"] == "skipped"
     assert res["reason"] == "monitoring_paused"
     mock_service.get_access_token.assert_not_called()
+
+@patch("app.supabase_service.get_backend_service_client")
+@patch("app.telegram_service.send_telegram_notification")
+def test_telegram_status_command(mock_send, mock_get_client):
+    # Setup mock supabase client
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+    
+    # Mock system_state query
+    mock_table_state = MagicMock()
+    mock_select_state = MagicMock()
+    mock_eq_state = MagicMock()
+    mock_execute_state = MagicMock()
+    
+    mock_execute_state.execute.return_value = MagicMock(data=[{"is_paused": False}])
+    mock_eq_state.eq.return_value = mock_execute_state
+    mock_select_state.select.return_value = mock_eq_state
+    
+    # Mock camera_logs query
+    mock_table_logs = MagicMock()
+    mock_select_logs = MagicMock()
+    mock_order_logs = MagicMock()
+    mock_limit_logs = MagicMock()
+    mock_execute_logs = MagicMock()
+    
+    mock_execute_logs.execute.return_value = MagicMock(data=[{"event_type": "online", "triggered_at": "2026-07-04 12:00:00"}])
+    mock_limit_logs.limit.return_value = mock_execute_logs
+    mock_order_logs.order.return_value = mock_limit_logs
+    mock_select_logs.select.return_value = mock_order_logs
+    
+    # Define route side_effects for table()
+    def table_side_effect(table_name):
+        if table_name == "system_state":
+            return mock_table_state
+        elif table_name == "camera_logs":
+            return mock_table_logs
+        return MagicMock()
+        
+    mock_client.table.side_effect = table_side_effect
+    
+    mock_table_state.select.return_value = mock_eq_state
+    mock_table_logs.select.return_value = mock_order_logs
+    
+    poller = TelegramBotPoller(config=MockTelegramConfig)
+    poller.process_command("/status", sender_chat_id="999888777")
+    
+    mock_send.assert_called_once()
+    args, kwargs = mock_send.call_args
+    assert "Imou-Exotel System Status" in args[0]
+    assert "🟢" in args[0]  # Online emoji
+    assert "ONLINE" in args[0]

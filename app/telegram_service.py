@@ -84,19 +84,55 @@ class TelegramBotPoller:
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
         elif cmd == "/status":
+            from app.supabase_service import get_backend_service_client
             from app.imou_poller import imou_poller
-            from app.exotel_service import get_last_call_timestamp
 
-            status_str = "Paused" if app_lifecycle.is_paused else "Active"
-            last_imou_check = self._format_timestamp(imou_poller.last_poll_timestamp)
+            is_paused = app_lifecycle.is_paused
+            last_state = "UNKNOWN"
+            last_timestamp = "Never"
             device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
-            last_exotel_dial = self._format_timestamp(get_last_call_timestamp(device_id))
+
+            try:
+                client = get_backend_service_client()
+                # Query system_state using UUID
+                state_res = client.table("system_state").select("is_paused").eq("id", "00000000-0000-0000-0000-000000000001").execute()
+                if state_res.data:
+                    is_paused = state_res.data[0].get("is_paused", is_paused)
+                    # Sync local app_lifecycle state with the database
+                    app_lifecycle.is_paused = is_paused
+
+                # Fetch single most recent row entry from public.camera_logs sorted by triggered_at descending
+                logs_res = client.table("camera_logs").select("event_type", "triggered_at").order("triggered_at", desc=True).limit(1).execute()
+                if logs_res.data:
+                    last_state = logs_res.data[0].get("event_type", "UNKNOWN").upper()
+                    last_timestamp = logs_res.data[0].get("triggered_at", "Never")
+            except Exception as e:
+                logger.error("Failed to query database for /status command: %s", str(e))
+                last_state = "DATABASE_OFFLINE"
+
+            # Emojis mapping
+            # ⏸️ if the system tracking loop is currently paused.
+            # Otherwise: 🟢 for Online, 🔴 for Offline
+            if is_paused:
+                state_emoji = "⏸️"
+                camera_emoji = "⏸️"
+            else:
+                state_emoji = "✅"
+                if "ONLINE" in last_state:
+                    camera_emoji = "🟢"
+                elif "OFFLINE" in last_state:
+                    camera_emoji = "🔴"
+                else:
+                    camera_emoji = "❓"
+
+            last_imou_check = self._format_timestamp(imou_poller.last_poll_timestamp)
 
             reply = (
                 "<b>📊 Imou-Exotel System Status</b>\n\n"
-                f"• <b>Monitoring State:</b> {'⛔️ Paused' if app_lifecycle.is_paused else '✅ Active'}\n"
-                f"• <b>Last Imou Check:</b> {last_imou_check}\n"
-                f"• <b>Last Exotel Dial:</b> {last_exotel_dial}\n"
+                f"• <b>Monitoring State:</b> {state_emoji} {'Paused' if is_paused else 'Active'}\n"
+                f"• <b>Last Known Camera State:</b> {camera_emoji} {last_state}\n"
+                f"• <b>Last State Update:</b> <code>{last_timestamp}</code>\n"
+                f"• <b>Last Poller Check:</b> <code>{last_imou_check}</code>\n"
                 f"• <b>Monitored Device:</b> <code>{device_id}</code>"
             )
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
