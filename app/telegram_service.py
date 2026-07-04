@@ -49,6 +49,7 @@ class TelegramBotPoller:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_update_id: int = 0
+        self._lock = threading.Lock()
 
     def _format_timestamp(self, ts: float) -> str:
         if ts <= 0:
@@ -158,17 +159,22 @@ class TelegramBotPoller:
         token = getattr(self.config, "TELEGRAM_BOT_TOKEN", Config.TELEGRAM_BOT_TOKEN)
         if not token or token == "YOUR_TELEGRAM_BOT_TOKEN":
             return
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._poll_updates, name="TelegramBotPollerThread", daemon=True)
-        self._thread.start()
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._poll_updates, name="TelegramBotPollerThread", daemon=True)
+            self._thread.start()
 
     def stop(self):
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=3)
-            self._thread = None
+        thread_to_join = None
+        with self._lock:
+            self._stop_event.set()
+            if self._thread is not None:
+                thread_to_join = self._thread
+                self._thread = None
+        if thread_to_join is not None:
+            thread_to_join.join(timeout=3)
 
 # Global telegram poller instance
 telegram_bot_poller = TelegramBotPoller()

@@ -3,12 +3,13 @@ import threading
 import logging
 from typing import Optional
 from supabase import create_client, Client
+from app.config import Config
 
 logger = logging.getLogger(__name__)
 
-# Fetch Supabase parameters from environment variables with fallback default values
-SUPABASE_URL = os.getenv("SUPABASE_URL", "YOUR_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SUPABASE_SERVICE_ROLE_KEY")
+# Fetch Supabase parameters from centralized Config
+SUPABASE_URL = Config.SUPABASE_URL
+SUPABASE_KEY = Config.SUPABASE_KEY
 
 class SupabaseDbClient:
     """

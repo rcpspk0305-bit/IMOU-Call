@@ -103,13 +103,13 @@ class ImouPoller:
 
     def start(self):
         """Starts the background polling thread if not already running."""
-        if self._thread is not None and self._thread.is_alive():
-            logger.warning("Imou poller thread is already running.")
-            return
+        with self._poll_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
 
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, name="ImouPollerThread", daemon=True)
-        self._thread.start()
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._run_loop, name="ImouPollerThread", daemon=True)
+            self._thread.start()
 
     def stop(self):
         """Stops the background polling thread cleanly."""

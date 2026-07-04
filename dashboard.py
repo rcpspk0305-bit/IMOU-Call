@@ -42,12 +42,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to get config keys from Env or st.secrets (Optimized for Streamlit Cloud deployment)
+from app.config import Config
+
+# Helper function to get config keys from centralized Config (which handles st.secrets / env mapping)
 def get_config(key: str, default: str = "") -> str:
-    if key in os.environ:
-        return os.environ[key]
-    elif hasattr(st, "secrets") and key in st.secrets:
-        return st.secrets[key]
+    val = getattr(Config, key.upper(), None)
+    if val is not None:
+        return str(val)
     return default
 
 # 3. Initialize Supabase Client
@@ -59,6 +60,24 @@ def get_supabase_client() -> Client:
         st.warning("⚠️ Supabase credentials are missing or set to defaults. Please check your config.")
         st.stop()
     return create_client(url, key)
+
+def start_background_workers() -> bool:
+    """
+    Fires the background poller routine exactly once using a persistent execution gate
+    so it runs headless in the background while the UI remains interactive.
+    """
+    try:
+        from app.imou_poller import imou_poller
+        from app.telegram_service import telegram_bot_poller
+        
+        imou_poller.start()
+        telegram_bot_poller.start()
+        return True
+    except Exception as e:
+        return False
+
+# Start background monitoring loops headless exactly once
+start_background_workers()
 
 try:
     supabase = get_supabase_client()

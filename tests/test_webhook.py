@@ -1,28 +1,9 @@
+from unittest.mock import patch, MagicMock
 import pytest
-from app import create_app
+from app.webhook import parse_imou_payload, process_imou_webhook_payload
+from app.lifecycle import app_lifecycle
 
-@pytest.fixture
-def client():
-    app = create_app(start_poller=False)
-    app.config["TESTING"] = True
-    with app.test_client() as client:
-        yield client
-
-def test_health_endpoint(client):
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json["status"] == "ok"
-
-def test_imou_webhook_non_json(client):
-    response = client.post("/imou-webhook", data="not json")
-    assert response.status_code == 400
-
-def test_imou_webhook_missing_device_id(client):
-    response = client.post("/imou-webhook", json={"status": "offline"})
-    assert response.status_code == 422
-    assert "Missing device identifier" in response.json["error"]
-
-def test_imou_webhook_standard_imou_payload(client):
+def test_parse_imou_payload_valid():
     payload = {
         "header": {"time": 123456},
         "params": {
@@ -30,17 +11,52 @@ def test_imou_webhook_standard_imou_payload(client):
             "status": "offline"
         }
     }
-    response = client.post("/imou-webhook", json=payload)
-    assert response.status_code == 200
-    assert response.json["message"] == "Webhook processed successfully"
-    assert response.json["result"]["device_id"] == "CAM_IMOU_999"
-    assert response.json["result"]["status"] == "offline"
+    device_id, status = parse_imou_payload(payload)
+    assert device_id == "CAM_IMOU_999"
+    assert status == "offline"
 
-def test_imou_webhook_alternative_payload_format(client):
+def test_parse_imou_payload_alternative():
     payload = {
         "deviceSerial": "SN_98765",
         "eventType": "deviceOffline"
     }
-    response = client.post("/imou-webhook", json=payload)
-    assert response.status_code == 200
-    assert response.json["result"]["device_id"] == "SN_98765"
+    device_id, status = parse_imou_payload(payload)
+    assert device_id == "SN_98765"
+    assert status == "deviceOffline"
+
+def test_parse_imou_payload_missing():
+    payload = {"status": "offline"}
+    device_id, status = parse_imou_payload(payload)
+    assert device_id is None
+    assert status == "offline"
+
+@patch("app.webhook.device_manager.handle_device_event")
+def test_process_imou_webhook_payload_success(mock_handle):
+    mock_handle.return_value = {"device_id": "CAM_IMOU_999", "status": "offline", "action": "timer_scheduled"}
+    payload = {
+        "header": {"time": 123456},
+        "params": {
+            "deviceId": "CAM_IMOU_999",
+            "status": "offline"
+        }
+    }
+    res = process_imou_webhook_payload(payload)
+    assert res["message"] == "Webhook processed successfully"
+    assert res["result"]["device_id"] == "CAM_IMOU_999"
+    assert res["result"]["status"] == "offline"
+    mock_handle.assert_called_once_with("CAM_IMOU_999", "offline")
+
+def test_process_imou_webhook_payload_missing_device():
+    payload = {"status": "offline"}
+    res = process_imou_webhook_payload(payload)
+    assert "error" in res
+    assert "Missing device identifier" in res["error"]
+
+def test_process_imou_webhook_payload_service_stopping():
+    app_lifecycle._lifecycle_flag.clear()
+    try:
+        res = process_imou_webhook_payload({"deviceId": "CAM_1", "status": "online"})
+        assert "error" in res
+        assert "shutting down" in res["error"].lower()
+    finally:
+        app_lifecycle._lifecycle_flag.set()
