@@ -46,7 +46,8 @@ class ImouService:
         Generates MD5 signature for Imou Open API requests.
         Format: md5("time:{time},nonce:{nonce},appSecret:{appSecret}")
         """
-        raw_str = f"time:{system_time},nonce:{nonce},appSecret:{app_secret}"
+        clean_secret = str(app_secret).strip()
+        raw_str = f"time:{system_time},nonce:{nonce},appSecret:{clean_secret}"
         return hashlib.md5(raw_str.encode("utf-8")).hexdigest().lower()
 
     def get_access_token(self, force_refresh: bool = False) -> Tuple[Optional[str], Optional[str]]:
@@ -66,8 +67,8 @@ class ImouService:
         current_time = int(now)
         import string
         random_nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
-        app_secret = self.config.IMOU_APP_SECRET
-        app_id = self.config.IMOU_APP_ID
+        app_secret = str(self.config.IMOU_APP_SECRET).strip()
+        app_id = str(self.config.IMOU_APP_ID).strip()
         random_uuid_str = str(uuid.uuid4())
 
         sign_string = f"time:{current_time},nonce:{random_nonce},appSecret:{app_secret}"
