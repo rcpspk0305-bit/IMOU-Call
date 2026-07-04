@@ -5,7 +5,7 @@ from app.lifecycle import app_lifecycle
 
 @pytest.fixture
 def client():
-    app = create_app()
+    app = create_app(start_poller=False)
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client

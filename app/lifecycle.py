@@ -26,12 +26,29 @@ class AppLifecycle:
     @property
     def is_paused(self) -> bool:
         with self._pause_lock:
-            return self._is_paused
+            local_val = self._is_paused
+        
+        try:
+            from app.supabase_service import get_system_paused
+            db_val = get_system_paused(fallback=local_val)
+            with self._pause_lock:
+                self._is_paused = db_val
+            return db_val
+        except Exception as e:
+            logger.error("Exception checking system pause state from database: %s", str(e))
+            return local_val
 
     @is_paused.setter
     def is_paused(self, value: bool):
+        val_bool = bool(value)
+        try:
+            from app.supabase_service import set_system_paused
+            set_system_paused(val_bool)
+        except Exception as e:
+            logger.error("Exception setting system pause state in database: %s", str(e))
+            
         with self._pause_lock:
-            self._is_paused = bool(value)
+            self._is_paused = val_bool
             logger.info("Application monitoring state updated: is_paused = %s", self._is_paused)
 
     def get_lifecycle_flag(self) -> threading.Event:

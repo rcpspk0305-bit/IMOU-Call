@@ -36,3 +36,7 @@ class Config:
 
     # Flask settings
     DEBUG = os.getenv("FLASK_ENV") == "development"
+
+    # Supabase Configuration
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "YOUR_SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SUPABASE_SERVICE_ROLE_KEY")

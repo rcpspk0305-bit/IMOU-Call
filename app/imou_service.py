@@ -2,11 +2,34 @@ import time
 import uuid
 import hashlib
 import logging
+import random
 import requests
 from typing import Optional, Tuple, Dict, Any
 from app.config import Config
 
 logger = logging.getLogger(__name__)
+
+def _execute_with_retry(operation_func, max_attempts=3, base_delay=1.0, max_delay=10.0):
+    """
+    Executes an Imou HTTP API operation function with exponential backoff retries.
+    If all attempts fail, it raises the last exception so the caller can handle it.
+    """
+    attempt = 1
+    delay = base_delay
+    while True:
+        try:
+            return operation_func()
+        except Exception as e:
+            if attempt >= max_attempts:
+                logger.error("Imou API call failed after %d consecutive attempts. Error: %s", attempt, str(e))
+                raise e
+            
+            jitter = random.uniform(0, 0.1 * delay)
+            sleep_time = min(delay + jitter, max_delay)
+            logger.warning("Imou API attempt %d failed: %s. Retrying in %.2f seconds...", attempt, str(e), sleep_time)
+            time.sleep(sleep_time)
+            attempt += 1
+            delay *= 2
 
 class ImouService:
     """
@@ -34,8 +57,9 @@ class ImouService:
         :return: Tuple of (accessToken, error_message)
         """
         now = time.time()
+        # EXPIRY-BASED TOKEN CACHING: Store the Imou accessToken in local memory with its exact expiration timestamp
         if not force_refresh and self._cached_token and now < self._token_expires_at:
-            logger.debug("Using cached Imou access token")
+            logger.debug("Using cached Imou access token. Expires in %d seconds", int(self._token_expires_at - now))
             return self._cached_token, None
 
         url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/accessToken"
@@ -60,7 +84,9 @@ class ImouService:
 
         logger.info("Fetching new Imou access token from %s", url)
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            def op():
+                return requests.post(url, json=payload, timeout=10)
+            response = _execute_with_retry(op)
             if response.status_code != 200:
                 err_msg = f"HTTP Error {response.status_code}: {response.text}"
                 logger.error("Failed to fetch Imou access token: %s", err_msg)
@@ -82,15 +108,16 @@ class ImouService:
                 logger.error(err_msg)
                 return None, err_msg
 
-            # Cache token (default expire 7 days or 3600s if provided)
+            # Cache token with its exact expiration timestamp (default: 3600 seconds if not provided)
             expire_seconds = int(result_data.get("expireTime", 3600))
             self._cached_token = access_token
-            self._token_expires_at = now + expire_seconds - 60  # 60s safety buffer
-            logger.info("Successfully obtained Imou access token")
+            # Subtract 60 seconds as a safe buffer window
+            self._token_expires_at = now + expire_seconds - 60
+            logger.info("Successfully obtained Imou access token. Cache set to expire in %d seconds.", expire_seconds)
             return access_token, None
 
-        except requests.RequestException as e:
-            err_msg = f"Network exception while requesting access token: {str(e)}"
+        except Exception as e:
+            err_msg = f"Exception while requesting access token: {str(e)}"
             logger.exception(err_msg)
             return None, err_msg
 
@@ -132,7 +159,9 @@ class ImouService:
 
         logger.info("Querying Imou device online status for device '%s'", device_id)
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            def op():
+                return requests.post(url, json=payload, timeout=10)
+            response = _execute_with_retry(op)
             if response.status_code != 200:
                 err_msg = f"HTTP Error {response.status_code}: {response.text}"
                 logger.error("Failed to query device online status: %s", err_msg)
@@ -165,10 +194,11 @@ class ImouService:
             logger.info("Device '%s' online status: %s (raw: %s)", device_id, "ONLINE" if is_online else "OFFLINE", raw_status)
             return is_online, None
 
-        except requests.RequestException as e:
-            err_msg = f"Network exception while querying device online status: {str(e)}"
+        except Exception as e:
+            err_msg = f"Exception while querying device online status: {str(e)}"
             logger.exception(err_msg)
             return None, err_msg
 
 # Global service instance
 imou_service = ImouService()
+
