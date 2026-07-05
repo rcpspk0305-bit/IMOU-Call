@@ -243,20 +243,22 @@ class TelegramBotPoller:
             send_telegram_notification("⚠️ <b>Access Denied:</b> Unauthorized chat ID.", chat_id=sender_chat_id, config=self.config)
             return
 
-        cmd = text.strip().split()[0].lower()
-        logger.info("Processing authorized Telegram command '%s' from chat_id '%s'", cmd, sender_chat_id_str)
+        # Extract base command string to support group chat syntax suffixes (e.g. /status@MyCamExotelBot)
+        first_word = text.strip().split()[0] if text.strip().split() else ""
+        base_command = first_word.split("@")[0].lower()
+        logger.info("Processing authorized Telegram command '%s' (base: '%s') from chat_id '%s'", first_word, base_command, sender_chat_id_str)
 
-        if cmd == "/pause":
+        if base_command == "/pause":
             app_lifecycle.is_paused = True
             reply = "⛔️ Monitoring paused. Exotel voice alerts disabled."
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
-        elif cmd == "/resume":
+        elif base_command == "/resume":
             app_lifecycle.is_paused = False
             reply = "✅ Monitoring resumed. Active tracking active."
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
-        elif cmd == "/status":
+        elif base_command == "/status":
             from app.supabase_service import get_backend_service_client
             from app.imou_poller import imou_poller
 
@@ -310,7 +312,7 @@ class TelegramBotPoller:
             )
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
-        elif cmd == "/checknow":
+        elif base_command == "/checknow":
             from app.imou_poller import imou_poller
             from app.supabase_service import get_backend_service_client
             
@@ -342,10 +344,10 @@ class TelegramBotPoller:
             
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
-        elif cmd == "/snapshot":
+        elif base_command == "/snapshot":
             self.handle_telegram_snapshot_command(sender_chat_id)
 
-        elif cmd == "/testcall":
+        elif base_command == "/testcall":
             from app.exotel_service import trigger_exotel_call
             device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
             send_telegram_notification("📞 <b>Initiating manual Exotel telephony channel test...</b>", chat_id=sender_chat_id, config=self.config)
@@ -361,7 +363,7 @@ class TelegramBotPoller:
                 logger.exception("Exception in /testcall command: %s", str(e))
                 send_telegram_notification(f"⚠️ <b>Test Call Error:</b> <code>{str(e)}</code>", chat_id=sender_chat_id, config=self.config)
 
-        elif cmd == "/stop":
+        elif base_command == "/stop":
             send_telegram_notification("🛑 <b>Stop command received. Terminating application gracefully...</b>", chat_id=sender_chat_id, config=self.config)
             app_lifecycle.initiate_stop()
 
