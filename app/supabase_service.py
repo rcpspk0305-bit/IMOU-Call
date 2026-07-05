@@ -69,20 +69,76 @@ def get_backend_service_client() -> Client:
             service_key = fetch_secret("key", "supabase")
     return create_client(url, service_key)
 
+def _get_module_client():
+    """Lazily initialize and return the module-level Supabase service client."""
+    global supabase_client
+    if supabase_client is None:
+        try:
+            supabase_client = get_backend_service_client()
+        except Exception:
+            pass
+    return supabase_client
+
+# Module-level client used by functions that don't receive an explicit client arg
+supabase_client: Client = None  # type: ignore[assignment]
+
 def _execute_with_retry(operation_func):
     return operation_func()
 
-def get_system_paused(supabase_client) -> bool:
+def get_system_paused(supabase_client=None, *args, **kwargs) -> bool:
+    """Fetch the system pause flag from Supabase.
+
+    Accepts optional positional and keyword arguments for thread-safe
+    flexibility. The first argument is the explicit Supabase client (defaults to None).
+    Keyword ``fallback`` provides the value returned when the DB
+    read fails or yields no data (defaults to ``False``).
+    """
+    fallback = kwargs.get("fallback", False)
+    
+    if supabase_client is None:
+        supabase_client = _get_module_client()
+
+    if supabase_client is None:
+        return fallback
+
     def op():
         return supabase_client.table("system_state").select("is_paused").eq("id", SYSTEM_STATE_UUID).execute()
     try:
         response = _execute_with_retry(op)
-        if response.data:
-            return response.data[0]["is_paused"]
-        return False
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("is_paused", fallback)
+        return fallback
     except Exception as e:
         print(f"Error checking system pause status: {str(e)}")
+        return fallback
+
+def set_system_paused(value: bool) -> bool:
+    """Update the system pause flag in Supabase.
+
+    Returns True on success, False on failure or when the client is
+    unavailable.
+    """
+    client = _get_module_client()
+    if client is None:
         return False
+    try:
+        client.table("system_state").update({"is_paused": bool(value)}).eq("id", SYSTEM_STATE_UUID).execute()
+        return True
+    except Exception as e:
+        print(f"Error setting system pause status: {str(e)}")
+        return False
+
+def fetch_recent_logs(limit: int = 100) -> list:
+    """Fetch the most recent camera_logs rows ordered by triggered_at descending."""
+    client = _get_module_client()
+    if client is None:
+        return []
+    try:
+        response = client.table("camera_logs").select("*").order("triggered_at", desc=True).limit(limit).execute()
+        return response.data or []
+    except Exception as e:
+        print(f"Error fetching recent logs: {str(e)}")
+        return []
 
 def log_camera_status(supabase_client, device_id, event_type, exotel_success, telegram_success):
     # Enforce strict production schema parameters (Discards non-existent 'message' column)
