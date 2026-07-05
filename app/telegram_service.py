@@ -193,11 +193,26 @@ class TelegramBotPoller:
             send_telegram_notification(f"❌ <b>Snapshot Request Failed:</b> {err}", chat_id=sender_chat_id, config=self.config)
             return
 
+        # Let the asset compile on the external server
+        time.sleep(2.0)
+
         try:
             import io
-            response = requests.get(snap_url, timeout=15)
-            if response.status_code != 200:
-                send_telegram_notification(f"❌ <b>Failed to download snapshot image. HTTP {response.status_code}</b>", chat_id=sender_chat_id, config=self.config)
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = requests.get(snap_url, timeout=15)
+                    if response.status_code == 200:
+                        break
+                except requests.RequestException as req_err:
+                    logger.warning("Snapshot download attempt %d failed: %s", attempt, str(req_err))
+                
+                if attempt < 3:
+                    time.sleep(1.5)
+
+            if response is None or response.status_code != 200:
+                status_str = str(response.status_code) if response is not None else "Unknown"
+                send_telegram_notification(f"❌ <b>Failed to download snapshot image. HTTP {status_str}</b>", chat_id=sender_chat_id, config=self.config)
                 return
             
             # Wrap the raw response content inside an in-memory binary stream using io.BytesIO

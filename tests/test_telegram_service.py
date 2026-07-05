@@ -113,10 +113,11 @@ def test_telegram_status_command(mock_send, mock_get_client):
     assert "🟢" in args[0]  # Online emoji
     assert "ONLINE" in args[0]
 
+@patch("time.sleep")
 @patch("requests.get")
 @patch("app.telegram_service.send_telegram_notification")
 @patch("app.imou_service.imou_service.set_device_snap_enhanced")
-def test_telegram_snapshot_command(mock_snap, mock_send, mock_get):
+def test_telegram_snapshot_command(mock_snap, mock_send, mock_get, mock_sleep):
     mock_snap.return_value = ("https://example.com/live_snapshot.jpg", None)
     
     mock_response = MagicMock()
