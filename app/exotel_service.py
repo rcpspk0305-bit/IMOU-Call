@@ -31,10 +31,11 @@ def get_last_call_timestamp(device_id: str) -> float:
     with _lockout_lock:
         return _last_call_timestamps.get(device_id, 0.0)
 
-def trigger_exotel_call(device_id: str, config: type = Config) -> dict:
+def trigger_exotel_call(device_id: str, config: type = Config, ignore_lockout: bool = False, is_recovery: bool = False) -> dict:
     """
     Executes an outbound HTTP POST call to the Exotel API to trigger the custom Call Flow Applet.
     Includes Agent Lockout protection and immediate Telegram alert notifications.
+    Supports bypassing lockout rules and sending online recovery confirmations.
     """
     global _last_alert_time
     now = time.time()
@@ -42,75 +43,86 @@ def trigger_exotel_call(device_id: str, config: type = Config) -> dict:
     quiet_zone = 1200  # Enforce a mandatory 20-minute quiet zone (1200 seconds)
 
     # 1. Enforce strict anti-spam quiet zone after last alert finished
-    with _lockout_lock:
-        elapsed_since_last_alert = now - _last_alert_time
-        if _last_alert_time > 0.0 and elapsed_since_last_alert < quiet_zone:
-            remaining = int(quiet_zone - elapsed_since_last_alert)
-            logger.warning(
-                "STRICT ANTI-SPAM LOCK ACTIVE: Only %.1f seconds passed since last alert call (quiet zone is 20m / 1200s). Alert suppressed. Remaining: %ds",
-                elapsed_since_last_alert, remaining
-            )
-            # Send digital record to Telegram that the alert is suppressed by strict anti-spam lock
-            send_telegram_notification(
-                f"⚠️ <b>ALERT SUPPRESSED (Anti-Spam Quiet Zone):</b> Camera <code>{device_id}</code> is offline. "
-                f"Global quiet zone active for another {remaining} seconds.",
-                config=config
-            )
-            return {
-                "success": False,
-                "reason": "anti_spam_quiet_zone_active",
-                "suppressed": True,
-                "elapsed_seconds": round(elapsed_since_last_alert, 1),
-                "quiet_zone_seconds": quiet_zone
-            }
+    if not ignore_lockout:
+        with _lockout_lock:
+            elapsed_since_last_alert = now - _last_alert_time
+            if _last_alert_time > 0.0 and elapsed_since_last_alert < quiet_zone:
+                remaining = int(quiet_zone - elapsed_since_last_alert)
+                logger.warning(
+                    "STRICT ANTI-SPAM LOCK ACTIVE: Only %.1f seconds passed since last alert call (quiet zone is 20m / 1200s). Alert suppressed. Remaining: %ds",
+                    elapsed_since_last_alert, remaining
+                )
+                # Send digital record to Telegram that the alert is suppressed by strict anti-spam lock
+                send_telegram_notification(
+                    f"⚠️ <b>ALERT SUPPRESSED (Anti-Spam Quiet Zone):</b> Camera <code>{device_id}</code> is offline. "
+                    f"Global quiet zone active for another {remaining} seconds.",
+                    config=config
+                )
+                return {
+                    "success": False,
+                    "reason": "anti_spam_quiet_zone_active",
+                    "suppressed": True,
+                    "elapsed_seconds": round(elapsed_since_last_alert, 1),
+                    "quiet_zone_seconds": quiet_zone
+                }
 
     # 2. IMPLEMENT AN AGENT LOCKOUT: Verify at least 30 minutes passed since last call
+    if not ignore_lockout:
+        with _lockout_lock:
+            last_call = _last_call_timestamps.get(device_id, 0.0)
+            elapsed = now - last_call
+
+            if last_call > 0 and elapsed < lockout_window:
+                logger.warning(
+                    "AGENT LOCKOUT ACTIVE for device '%s': Last call placed %.1f seconds ago (lockout is %ds). Call suppressed.",
+                    device_id, elapsed, lockout_window
+                )
+                # Send digital record to Telegram even when call is suppressed by lockout
+                send_telegram_notification(
+                    f"⚠️ <b>ALERT SUPPRESSED (Agent Lockout):</b> Camera <code>{device_id}</code> is still OFFLINE! "
+                    f"Last call was placed {int(elapsed)}s ago (Lockout: {lockout_window}s).",
+                    config=config
+                )
+                return {
+                    "success": False,
+                    "reason": "agent_lockout_active",
+                    "suppressed": True,
+                    "elapsed_seconds": round(elapsed, 1),
+                    "lockout_seconds": lockout_window
+                }
+
+    # Record timestamp for this call attempt
     with _lockout_lock:
-        last_call = _last_call_timestamps.get(device_id, 0.0)
-        elapsed = now - last_call
-
-        if last_call > 0 and elapsed < lockout_window:
-            logger.warning(
-                "AGENT LOCKOUT ACTIVE for device '%s': Last call placed %.1f seconds ago (lockout is %ds). Call suppressed.",
-                device_id, elapsed, lockout_window
-            )
-            # Send digital record to Telegram even when call is suppressed by lockout
-            send_telegram_notification(
-                f"⚠️ <b>ALERT SUPPRESSED (Agent Lockout):</b> Camera <code>{device_id}</code> is still OFFLINE! "
-                f"Last call was placed {int(elapsed)}s ago (Lockout: {lockout_window}s).",
-                config=config
-            )
-            return {
-                "success": False,
-                "reason": "agent_lockout_active",
-                "suppressed": True,
-                "elapsed_seconds": round(elapsed, 1),
-                "lockout_seconds": lockout_window
-            }
-
-        # Record timestamp for this call attempt
         _last_call_timestamps[device_id] = now
 
-    # Append offline log to Supabase 'logs' table before executing notification sequences
+    # Append state log to Supabase 'camera_logs' table before executing notification sequences
     try:
         from app.supabase_service import log_camera_status, supabase_client
         log_camera_status(
             supabase_client,
             device_id,
-            "offline",
+            "online" if is_recovery else "offline",
             True,
             True
         )
     except Exception as e:
-        logger.exception("Failed to log offline state to Supabase: %s", str(e))
+        logger.exception("Failed to log state to Supabase: %s", str(e))
 
-    # Requirement 4: ALERTS UPGRADE - Send Telegram text notification IMMEDIATELY alongside Exotel phone call routine
-    send_telegram_notification(
-        f"🚨 <b>CAMERA OFFLINE ALERT!</b>\n"
-        f"Camera <code>{device_id}</code> dropped offline!\n"
-        f"📞 Triggering automated Exotel voice call now...",
-        config=config
-    )
+    # Send Telegram text notification IMMEDIATELY alongside Exotel phone call routine
+    if is_recovery:
+        send_telegram_notification(
+            f"✅ <b>CAMERA RECOVERY ALERT!</b>\n"
+            f"Camera <code>{device_id}</code> is back ONLINE!\n"
+            f"📞 Triggering recovery confirmation voice call...",
+            config=config
+        )
+    else:
+        send_telegram_notification(
+            f"🚨 <b>CAMERA OFFLINE ALERT!</b>\n"
+            f"Camera <code>{device_id}</code> dropped offline!\n"
+            f"📞 Triggering automated Exotel voice call now...",
+            config=config
+        )
 
     url = f"https://{config.EXOTEL_SUBDOMAIN}/v1/Accounts/{config.EXOTEL_SID}/Calls/connect.json"
     applet_url = f"http://my.exotel.in/exoml/start_voice/{config.APP_ID}"
@@ -119,7 +131,7 @@ def trigger_exotel_call(device_id: str, config: type = Config) -> dict:
         "From": config.FROM_NUMBER,
         "CallerId": config.CALLER_ID,
         "Url": applet_url,
-        "CustomField": f"device_offline:{device_id}"
+        "CustomField": f"device_online:{device_id}" if is_recovery else f"device_offline:{device_id}"
     }
 
     logger.info(
