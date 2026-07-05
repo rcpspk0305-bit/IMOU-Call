@@ -113,10 +113,16 @@ def test_telegram_status_command(mock_send, mock_get_client):
     assert "🟢" in args[0]  # Online emoji
     assert "ONLINE" in args[0]
 
+@patch("requests.get")
 @patch("app.telegram_service.send_telegram_notification")
 @patch("app.imou_service.imou_service.set_device_snap_enhanced")
-def test_telegram_snapshot_command(mock_snap, mock_send):
+def test_telegram_snapshot_command(mock_snap, mock_send, mock_get):
     mock_snap.return_value = ("https://example.com/live_snapshot.jpg", None)
+    
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"fake snapshot image bytes"
+    mock_get.return_value = mock_response
     
     poller = TelegramBotPoller(config=MockTelegramConfig)
     
@@ -129,9 +135,43 @@ def test_telegram_snapshot_command(mock_snap, mock_send):
     # Verify snapshot API was called
     mock_snap.assert_called_once_with("CAM_TEST_TELEGRAM", channel_id="0")
     
-    # Verify send_photo was called on the bot proxy
+    # Verify requests.get was called
+    mock_get.assert_called_once_with("https://example.com/live_snapshot.jpg", timeout=15)
+    
+    # Verify send_photo was called on the bot proxy with BytesIO stream
     poller.bot.send_photo.assert_called_once()
     args, kwargs = poller.bot.send_photo.call_args
     assert args[0] == "999888777"
-    assert args[1] == "https://example.com/live_snapshot.jpg"
+    assert hasattr(args[1], "read")
+    assert getattr(args[1], "name") == "snapshot.jpg"
     assert "Camera Live Snapshot" in args[2]
+
+@patch("app.telegram_service.send_telegram_notification")
+@patch("app.exotel_service.trigger_exotel_call")
+def test_telegram_testcall_command_success(mock_trigger, mock_send):
+    mock_trigger.return_value = {"success": True}
+    
+    poller = TelegramBotPoller(config=MockTelegramConfig)
+    poller.process_command("/testcall", sender_chat_id="999888777")
+    
+    mock_trigger.assert_called_once_with("CAM_TEST_TELEGRAM", config=MockTelegramConfig, ignore_lockout=True)
+    assert mock_send.call_count == 2
+    
+    # Check that second send is success notification
+    args, kwargs = mock_send.call_args_list[1]
+    assert "Test Call Placed successfully" in args[0]
+
+@patch("app.telegram_service.send_telegram_notification")
+@patch("app.exotel_service.trigger_exotel_call")
+def test_telegram_testcall_command_failure(mock_trigger, mock_send):
+    mock_trigger.return_value = {"success": False, "reason": "lockout_active"}
+    
+    poller = TelegramBotPoller(config=MockTelegramConfig)
+    poller.process_command("/testcall", sender_chat_id="999888777")
+    
+    mock_trigger.assert_called_once_with("CAM_TEST_TELEGRAM", config=MockTelegramConfig, ignore_lockout=True)
+    assert mock_send.call_count == 2
+    
+    # Check that second send is failure notification
+    args, kwargs = mock_send.call_args_list[1]
+    assert "Test Call Failed" in args[0]

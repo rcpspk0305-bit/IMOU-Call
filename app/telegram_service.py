@@ -43,9 +43,9 @@ def format_to_ist(dt_val) -> str:
         logger.warning("Error localizing timestamp '%s' to IST: %s", str(dt_val), str(e))
         return str(dt_val)
 
-def send_telegram_photo(photo_url: str, caption: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
+def send_telegram_photo(photo, caption: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
     """
-    Sends a photo alert via Telegram Bot API using a URL.
+    Sends a photo alert via Telegram Bot API. Accepts either a URL string or an in-memory byte stream.
     """
     token = getattr(config, "TELEGRAM_BOT_TOKEN", None) or Config.TELEGRAM_BOT_TOKEN
     target_chat_id = chat_id or getattr(config, "TELEGRAM_ALLOWED_CHAT_ID", None) or Config.TELEGRAM_ALLOWED_CHAT_ID
@@ -55,23 +55,37 @@ def send_telegram_photo(photo_url: str, caption: str, chat_id: Optional[str] = N
         return False
 
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
-    payload = {
-        "chat_id": target_chat_id,
-        "photo": photo_url,
-        "caption": caption,
-        "parse_mode": "Markdown"
-    }
-
+    
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        import io
+        if hasattr(photo, "read") or isinstance(photo, (io.BytesIO, io.BufferedReader)):
+            if hasattr(photo, "seek"):
+                photo.seek(0)
+            file_name = getattr(photo, "name", "photo.jpg")
+            files = {"photo": (file_name, photo, "image/jpeg")}
+            data = {
+                "chat_id": target_chat_id,
+                "caption": caption,
+                "parse_mode": "Markdown"
+            }
+            response = requests.post(url, data=data, files=files, timeout=20)
+        else:
+            payload = {
+                "chat_id": target_chat_id,
+                "photo": str(photo),
+                "caption": caption,
+                "parse_mode": "Markdown"
+            }
+            response = requests.post(url, json=payload, timeout=10)
+
         if response.status_code == 200:
             logger.info("Telegram photo alert sent successfully to chat_id '%s'", target_chat_id)
             return True
         else:
             logger.error("Failed to send Telegram photo alert. Status: %d, Response: %s", response.status_code, response.text)
             return False
-    except requests.RequestException as e:
-        logger.exception("Network exception sending Telegram photo alert: %s", str(e))
+    except Exception as e:
+        logger.exception("Exception sending Telegram photo alert: %s", str(e))
         return False
 
 def send_telegram_photo_stream(photo_url: str, caption: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
@@ -147,8 +161,8 @@ class TelegramBotProxy:
     def __init__(self, poller):
         self.poller = poller
 
-    def send_photo(self, chat_id: str, photo_url: str, caption: str) -> bool:
-        return send_telegram_photo_stream(photo_url, caption, chat_id=chat_id, config=self.poller.config)
+    def send_photo(self, chat_id: str, photo, caption: str) -> bool:
+        return send_telegram_photo(photo, caption, chat_id=chat_id, config=self.poller.config)
 
 class TelegramBotPoller:
     """
@@ -165,6 +179,41 @@ class TelegramBotPoller:
 
     def _format_timestamp(self, ts: float) -> str:
         return format_to_ist(ts)
+
+    def handle_telegram_snapshot_command(self, sender_chat_id: str):
+        """
+        Retrieves snapshot URL, downloads image locally into BytesIO, and dispatches via bot.send_photo.
+        """
+        from app.imou_service import imou_service
+        device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
+        send_telegram_notification("📸 <b>Requesting live snapshot from Imou camera...</b>", chat_id=sender_chat_id, config=self.config)
+        
+        snap_url, err = imou_service.set_device_snap_enhanced(device_id, channel_id="0")
+        if err or not snap_url:
+            send_telegram_notification(f"❌ <b>Snapshot Request Failed:</b> {err}", chat_id=sender_chat_id, config=self.config)
+            return
+
+        try:
+            import io
+            response = requests.get(snap_url, timeout=15)
+            if response.status_code != 200:
+                send_telegram_notification(f"❌ <b>Failed to download snapshot image. HTTP {response.status_code}</b>", chat_id=sender_chat_id, config=self.config)
+                return
+            
+            # Wrap the raw response content inside an in-memory binary stream using io.BytesIO
+            bio = io.BytesIO(response.content)
+            bio.name = 'snapshot.jpg'
+            
+            now_ist = format_to_ist(time.time())
+            caption = f"📸 *Camera Live Snapshot*\nDevice: `{device_id}`\nTime: `{now_ist}`"
+            
+            # Pass this byte stream object directly as the photo parameter in bot.send_photo()
+            sent = self.bot.send_photo(sender_chat_id, bio, caption)
+            if not sent:
+                send_telegram_notification("❌ <b>Failed to route snapshot image payload to chat ID.</b>", chat_id=sender_chat_id, config=self.config)
+        except Exception as e:
+            logger.exception("Exception in handle_telegram_snapshot_command: %s", str(e))
+            send_telegram_notification(f"❌ <b>Snapshot command error:</b> {str(e)}", chat_id=sender_chat_id, config=self.config)
 
     def process_command(self, text: str, sender_chat_id: str):
         """
@@ -279,26 +328,30 @@ class TelegramBotPoller:
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
         elif cmd == "/snapshot":
-            from app.imou_service import imou_service
+            self.handle_telegram_snapshot_command(sender_chat_id)
+
+        elif cmd == "/testcall":
+            from app.exotel_service import trigger_exotel_call
             device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
-            send_telegram_notification("📸 <b>Requesting live snapshot from Imou camera...</b>", chat_id=sender_chat_id, config=self.config)
+            send_telegram_notification("📞 <b>Initiating manual Exotel telephony channel test...</b>", chat_id=sender_chat_id, config=self.config)
             
-            snap_url, err = imou_service.set_device_snap_enhanced(device_id, channel_id="0")
-            if err or not snap_url:
-                send_telegram_notification(f"❌ <b>Snapshot Request Failed:</b> {err}", chat_id=sender_chat_id, config=self.config)
-            else:
-                now_ist = format_to_ist(time.time())
-                caption = f"📸 *Camera Live Snapshot*\nDevice: `{device_id}`\nTime: `{now_ist}`"
-                sent = self.bot.send_photo(sender_chat_id, snap_url, caption)
-                if not sent:
-                    send_telegram_notification("❌ <b>Failed to route snapshot image payload to chat ID.</b>", chat_id=sender_chat_id, config=self.config)
+            try:
+                res = trigger_exotel_call(device_id, config=self.config, ignore_lockout=True)
+                if res.get("success"):
+                    send_telegram_notification("✅ <b>Test Call Placed successfully!</b> Check your phone.", chat_id=sender_chat_id, config=self.config)
+                else:
+                    reason = res.get("reason") or res.get("error") or "Unknown error"
+                    send_telegram_notification(f"⚠️ <b>Test Call Failed:</b> <code>{reason}</code>", chat_id=sender_chat_id, config=self.config)
+            except Exception as e:
+                logger.exception("Exception in /testcall command: %s", str(e))
+                send_telegram_notification(f"⚠️ <b>Test Call Error:</b> <code>{str(e)}</code>", chat_id=sender_chat_id, config=self.config)
 
         elif cmd == "/stop":
             send_telegram_notification("🛑 <b>Stop command received. Terminating application gracefully...</b>", chat_id=sender_chat_id, config=self.config)
             app_lifecycle.initiate_stop()
 
         else:
-            send_telegram_notification("ℹ️ <b>Available Commands:</b> /pause, /resume, /status, /checknow, /snapshot, /stop", chat_id=sender_chat_id, config=self.config)
+            send_telegram_notification("ℹ️ <b>Available Commands:</b> /pause, /resume, /status, /checknow, /snapshot, /testcall, /stop", chat_id=sender_chat_id, config=self.config)
 
     def _poll_updates(self):
         token = getattr(self.config, "TELEGRAM_BOT_TOKEN", Config.TELEGRAM_BOT_TOKEN)

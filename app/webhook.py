@@ -99,10 +99,20 @@ def process_imou_webhook_payload(payload: dict) -> dict:
     alarm_time, alarm_desc, pic_url = parse_imou_alarm_details(payload)
     if alarm_desc and ("human" in str(alarm_desc).lower() or "people" in str(alarm_desc).lower() or "person" in str(alarm_desc).lower()):
         if pic_url:
+            import io, requests
             from app.telegram_service import send_telegram_photo
-            caption = "⚠️ *Security Alert: Human Detected at Home!*"
-            send_telegram_photo(pic_url, caption)
-            logger.info("Processed human detection alarm webhook event. Telegram photo alert sent. Time: %s, Desc: %s", alarm_time, alarm_desc)
+            try:
+                img_resp = requests.get(pic_url, timeout=15)
+                if img_resp.status_code == 200:
+                    bio = io.BytesIO(img_resp.content)
+                    bio.name = 'alarm_trigger.jpg'
+                    caption = "⚠️ *Security Alert: Human Detected at Home!*"
+                    send_telegram_photo(bio, caption)
+                    logger.info("Processed human detection alarm webhook event. Telegram photo alert sent. Time: %s, Desc: %s", alarm_time, alarm_desc)
+                else:
+                    logger.error("Failed to download webhook alarm image from %s: HTTP %d", pic_url, img_resp.status_code)
+            except Exception as e:
+                logger.error("Exception downloading webhook alarm image: %s", str(e))
             return {
                 "message": "Human detection alarm processed successfully",
                 "triggered": True,

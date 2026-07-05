@@ -276,13 +276,22 @@ class ImouPoller:
                     timestamp = latest_alarm.get("time") or latest_alarm.get("timestamp")
                     
                     if pic_url:
-                        from app.telegram_service import send_telegram_photo_stream
-                        caption = f"⚠️ *Security Alert: Human Detected!*\nDevice: `{self.device_id}`\nTime: `{timestamp}`"
-                        sent = send_telegram_photo_stream(pic_url, caption, config=self.config)
-                        if sent:
-                            self.last_processed_alarm_id = alarm_id
-                            logger.info("Human detection alert sent successfully. last_processed_alarm_id updated to %s", alarm_id)
-                            return alarm_id
+                        import io, requests
+                        from app.telegram_service import telegram_bot_poller
+                        
+                        img_resp = requests.get(pic_url, timeout=15)
+                        if img_resp.status_code == 200:
+                            bio = io.BytesIO(img_resp.content)
+                            bio.name = 'alarm_trigger.jpg'
+                            
+                            chat_id = getattr(self.config, "TELEGRAM_ALLOWED_CHAT_ID", None)
+                            caption = f"⚠️ *Security Alert: Human Detected!*\nDevice: `{self.device_id}`\nTime: `{timestamp}`"
+                            
+                            sent = telegram_bot_poller.bot.send_photo(chat_id, bio, caption)
+                            if sent:
+                                self.last_processed_alarm_id = alarm_id
+                                logger.info("Human detection alert sent successfully. last_processed_alarm_id updated to %s", alarm_id)
+                                return alarm_id
             return None
         except Exception as e:
             logger.exception("Exception in check_human_alarms: %s", str(e))

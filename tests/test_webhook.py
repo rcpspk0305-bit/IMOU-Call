@@ -61,9 +61,15 @@ def test_process_imou_webhook_payload_service_stopping():
     finally:
         app_lifecycle._lifecycle_flag.set()
 
+@patch("requests.get")
 @patch("app.telegram_service.send_telegram_photo")
-def test_process_imou_webhook_payload_human_detection(mock_send_photo):
+def test_process_imou_webhook_payload_human_detection(mock_send_photo, mock_get):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"fake webhook image bytes"
+    mock_get.return_value = mock_response
     mock_send_photo.return_value = True
+    
     payload = {
         "params": {
             "name": "human",
@@ -76,4 +82,13 @@ def test_process_imou_webhook_payload_human_detection(mock_send_photo):
     assert res["triggered"] is True
     assert res["pic_url"] == "https://example.com/alarm.jpg"
     assert res["event"] == "human"
-    mock_send_photo.assert_called_once_with("https://example.com/alarm.jpg", "⚠️ *Security Alert: Human Detected at Home!*")
+    
+    # Verify requests.get was called to download the image
+    mock_get.assert_called_once_with("https://example.com/alarm.jpg", timeout=15)
+    
+    # Verify send_telegram_photo was called with BytesIO stream and caption
+    mock_send_photo.assert_called_once()
+    args, kwargs = mock_send_photo.call_args
+    assert hasattr(args[0], "read")
+    assert getattr(args[0], "name") == "alarm_trigger.jpg"
+    assert args[1] == "⚠️ *Security Alert: Human Detected at Home!*"
