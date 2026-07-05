@@ -143,6 +143,13 @@ def send_telegram_notification(text: str, chat_id: Optional[str] = None, config:
         logger.exception("Network exception sending Telegram notification: %s", str(e))
         return False
 
+class TelegramBotProxy:
+    def __init__(self, poller):
+        self.poller = poller
+
+    def send_photo(self, chat_id: str, photo_url: str, caption: str) -> bool:
+        return send_telegram_photo_stream(photo_url, caption, chat_id=chat_id, config=self.poller.config)
+
 class TelegramBotPoller:
     """
     Background daemon thread handling Telegram Bot command control plane via long-polling getUpdates.
@@ -154,6 +161,7 @@ class TelegramBotPoller:
         self._thread: Optional[threading.Thread] = None
         self._last_update_id: int = 0
         self._lock = threading.Lock()
+        self.bot = TelegramBotProxy(self)
 
     def _format_timestamp(self, ts: float) -> str:
         return format_to_ist(ts)
@@ -270,12 +278,27 @@ class TelegramBotPoller:
             
             send_telegram_notification(reply, chat_id=sender_chat_id, config=self.config)
 
+        elif cmd == "/snapshot":
+            from app.imou_service import imou_service
+            device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
+            send_telegram_notification("📸 <b>Requesting live snapshot from Imou camera...</b>", chat_id=sender_chat_id, config=self.config)
+            
+            snap_url, err = imou_service.set_device_snap_enhanced(device_id, channel_id="0")
+            if err or not snap_url:
+                send_telegram_notification(f"❌ <b>Snapshot Request Failed:</b> {err}", chat_id=sender_chat_id, config=self.config)
+            else:
+                now_ist = format_to_ist(time.time())
+                caption = f"📸 *Camera Live Snapshot*\nDevice: `{device_id}`\nTime: `{now_ist}`"
+                sent = self.bot.send_photo(sender_chat_id, snap_url, caption)
+                if not sent:
+                    send_telegram_notification("❌ <b>Failed to route snapshot image payload to chat ID.</b>", chat_id=sender_chat_id, config=self.config)
+
         elif cmd == "/stop":
             send_telegram_notification("🛑 <b>Stop command received. Terminating application gracefully...</b>", chat_id=sender_chat_id, config=self.config)
             app_lifecycle.initiate_stop()
 
         else:
-            send_telegram_notification("ℹ️ <b>Available Commands:</b> /pause, /resume, /status, /checknow, /stop", chat_id=sender_chat_id, config=self.config)
+            send_telegram_notification("ℹ️ <b>Available Commands:</b> /pause, /resume, /status, /checknow, /snapshot, /stop", chat_id=sender_chat_id, config=self.config)
 
     def _poll_updates(self):
         token = getattr(self.config, "TELEGRAM_BOT_TOKEN", Config.TELEGRAM_BOT_TOKEN)

@@ -159,10 +159,9 @@ def test_check_human_alarms_dispatch(mock_get, mock_post):
     # Run human alarms check
     dispatched = poller.check_human_alarms()
     
-    # Verify only the human alarm was dispatched
-    assert dispatched == ["msg_111"]
-    assert "msg_111" in poller.processed_alarm_ids
-    assert "msg_222" not in poller.processed_alarm_ids
+    # Verify the human alarm was dispatched and tracking state updated
+    assert dispatched == "msg_111"
+    assert poller.last_processed_alarm_id == "msg_111"
     
     # Verify image download was requested
     mock_get.assert_called_once_with("https://example.com/alarm1.jpg", timeout=15)

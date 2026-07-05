@@ -39,6 +39,7 @@ class ImouPoller:
         self.last_known_state = "ONLINE"
         self.offline_alerts_sent = 0
         self.last_offline_alert_time = 0.0
+        self.last_processed_alarm_id = None
 
     def poll_once(self, ignore_pause: bool = False) -> dict:
         """
@@ -195,18 +196,15 @@ class ImouPoller:
                 "call_result": call_result
             }
 
-    def check_human_alarms(self) -> list:
+    def check_human_alarms(self) -> Optional[str]:
         """
         Hits the Imou Open API 'getAlarmMessageList' endpoint, filters for human detection alarms,
-        and dispatches Telegram photo alerts.
+        verifies it's a new alarm, dispatches Telegram photo alerts, and updates last_processed_alarm_id.
         """
-        if not hasattr(self, "processed_alarm_ids"):
-            self.processed_alarm_ids = set()
-
         token, err = self.imou_service.get_access_token()
         if err or not token:
             logger.error("Failed to retrieve Imou access token for getAlarmMessageList: %s", err)
-            return []
+            return None
 
         # Generate system header parameters
         system_time = int(time.time())
@@ -250,7 +248,7 @@ class ImouPoller:
             response = _execute_with_retry(op)
             if response.status_code != 200:
                 logger.error("getAlarmMessageList request failed: HTTP %d: %s", response.status_code, response.text)
-                return []
+                return None
 
             data = response.json()
             result = data.get("result", {})
@@ -261,39 +259,34 @@ class ImouPoller:
                 else:
                     alarm_list = []
 
-            dispatched = []
-            from app.telegram_service import send_telegram_photo_stream
-            
-            for alarm in alarm_list:
-                if not isinstance(alarm, dict):
-                    continue
-                event_desc = str(alarm.get("name") or alarm.get("type") or alarm.get("eventType") or "").lower()
-                alarm_id = alarm.get("alarmId") or alarm.get("msgId")
-                
-                if alarm_id and alarm_id in self.processed_alarm_ids:
-                    continue
-                
-                # Check if event contains human identifiers
-                if "human" in event_desc or "person" in event_desc or "people" in event_desc:
-                    pic_url = alarm.get("picUrl") or alarm.get("picurl") or alarm.get("pic_url")
-                    timestamp = alarm.get("time") or alarm.get("timestamp")
+            if not alarm_list:
+                return None
+
+            latest_alarm = alarm_list[0]
+            if not isinstance(latest_alarm, dict):
+                return None
+
+            event_desc = str(latest_alarm.get("name") or latest_alarm.get("type") or latest_alarm.get("eventType") or "").lower()
+            alarm_id = latest_alarm.get("alarmId") or latest_alarm.get("msgId")
+
+            # Check if event contains human identifiers
+            if "human" in event_desc or "person" in event_desc or "people" in event_desc:
+                if alarm_id and alarm_id != self.last_processed_alarm_id:
+                    pic_url = latest_alarm.get("picUrl") or latest_alarm.get("picurl") or latest_alarm.get("pic_url")
+                    timestamp = latest_alarm.get("time") or latest_alarm.get("timestamp")
                     
                     if pic_url:
+                        from app.telegram_service import send_telegram_photo_stream
                         caption = f"⚠️ *Security Alert: Human Detected!*\nDevice: `{self.device_id}`\nTime: `{timestamp}`"
                         sent = send_telegram_photo_stream(pic_url, caption, config=self.config)
                         if sent:
-                            dispatched.append(alarm_id)
-                            if alarm_id:
-                                self.processed_alarm_ids.add(alarm_id)
-                                
-            # Keep set size bounded
-            while len(self.processed_alarm_ids) > 100:
-                self.processed_alarm_ids.pop()
-                
-            return dispatched
+                            self.last_processed_alarm_id = alarm_id
+                            logger.info("Human detection alert sent successfully. last_processed_alarm_id updated to %s", alarm_id)
+                            return alarm_id
+            return None
         except Exception as e:
             logger.exception("Exception in check_human_alarms: %s", str(e))
-            return []
+            return None
 
     def _run_loop(self):
         logger.info("Imou active polling thread started. Interval: %d seconds", self.poll_interval_seconds)

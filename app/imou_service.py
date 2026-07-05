@@ -204,6 +204,74 @@ class ImouService:
             logger.exception(err_msg)
             return None, err_msg
 
+    def set_device_snap_enhanced(self, device_id: str, channel_id: str = "0", access_token: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Takes a live snapshot of the camera via setDeviceSnapEnhanced.
+        Returns Tuple of (snapshot_url: str | None, error_message: str | None).
+        """
+        if not access_token:
+            token, err = self.get_access_token()
+            if err or not token:
+                return None, f"Could not obtain access token: {err}"
+            access_token = token
+
+        url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/setDeviceSnapEnhanced"
+        system_time = int(time.time())
+        import random, string
+        nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        sign = self._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
+
+        payload = {
+            "system": {
+                "ver": "1.1",
+                "sign": sign,
+                "appId": self.config.IMOU_APP_ID,
+                "time": system_time,
+                "nonce": nonce
+            },
+            "params": {
+                "token": access_token,
+                "accessToken": access_token,
+                "deviceId": device_id,
+                "channelId": str(channel_id)
+            },
+            "id": str(system_time)
+        }
+
+        logger.info("Triggering setDeviceSnapEnhanced for device '%s' channel '%s'", device_id, channel_id)
+        try:
+            def op():
+                return requests.post(url, json=payload, timeout=15)
+            response = _execute_with_retry(op)
+            if response.status_code != 200:
+                err_msg = f"HTTP Error {response.status_code}: {response.text}"
+                logger.error("Failed to setDeviceSnapEnhanced: %s", err_msg)
+                return None, err_msg
+
+            data = response.json()
+            result = data.get("result", {})
+            result_data = result.get("data", {})
+
+            snap_url = (
+                result_data.get("url") or
+                result.get("url") or
+                data.get("url")
+            )
+
+            if not snap_url:
+                err_msg = f"Could not parse snapshot URL from Imou response: {data}"
+                logger.error(err_msg)
+                return None, err_msg
+
+            logger.info("Successfully obtained snapshot URL for device '%s': %s", device_id, snap_url)
+            return snap_url, None
+
+        except Exception as e:
+            err_msg = f"Exception while triggering setDeviceSnapEnhanced: {str(e)}"
+            logger.exception(err_msg)
+            return None, err_msg
+
+
 # Global service instance
 imou_service = ImouService()
 

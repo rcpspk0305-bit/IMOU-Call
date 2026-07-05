@@ -112,3 +112,26 @@ def test_telegram_status_command(mock_send, mock_get_client):
     assert "Imou-Exotel System Status" in args[0]
     assert "🟢" in args[0]  # Online emoji
     assert "ONLINE" in args[0]
+
+@patch("app.telegram_service.send_telegram_notification")
+@patch("app.imou_service.imou_service.set_device_snap_enhanced")
+def test_telegram_snapshot_command(mock_snap, mock_send):
+    mock_snap.return_value = ("https://example.com/live_snapshot.jpg", None)
+    
+    poller = TelegramBotPoller(config=MockTelegramConfig)
+    
+    # Mock bot.send_photo
+    poller.bot.send_photo = MagicMock()
+    poller.bot.send_photo.return_value = True
+    
+    poller.process_command("/snapshot", sender_chat_id="999888777")
+    
+    # Verify snapshot API was called
+    mock_snap.assert_called_once_with("CAM_TEST_TELEGRAM", channel_id="0")
+    
+    # Verify send_photo was called on the bot proxy
+    poller.bot.send_photo.assert_called_once()
+    args, kwargs = poller.bot.send_photo.call_args
+    assert args[0] == "999888777"
+    assert args[1] == "https://example.com/live_snapshot.jpg"
+    assert "Camera Live Snapshot" in args[2]
