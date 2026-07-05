@@ -40,8 +40,13 @@ class ImouPoller:
         self.offline_alerts_sent = 0
         self.last_offline_alert_time = 0.0
         self.last_processed_alarm_id = None
+        import datetime
+        self.last_alarm_check_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     def poll_once(self, ignore_pause: bool = False) -> dict:
+        return self.run_polling_cycle(ignore_pause=ignore_pause)
+
+    def run_polling_cycle(self, ignore_pause: bool = False) -> dict:
         """
         Executes a single polling cycle:
         1. Verify lifecycle and pause state.
@@ -61,6 +66,12 @@ class ImouPoller:
         if not self.device_id or self.device_id == "YOUR_IMOU_DEVICE_ID":
             logger.warning("Imou poller skipped: IMOU_DEVICE_ID is not configured.")
             return {"status": "skipped", "reason": "unconfigured_device_id"}
+
+        # Call check_for_human_alarms at the top of the execution loop sequence right before validating the baseline device network status configurations
+        try:
+            self.check_for_human_alarms()
+        except Exception as e:
+            logger.exception("Error checking for human alarms: %s", str(e))
 
         logger.info("Starting active Imou status poll cycle for device '%s'", self.device_id)
 
@@ -196,7 +207,7 @@ class ImouPoller:
                 "call_result": call_result
             }
 
-    def check_human_alarms(self) -> Optional[str]:
+    def check_for_human_alarms(self) -> Optional[str]:
         """
         Hits the Imou Open API 'getAlarmMessageList' endpoint, filters for human detection alarms,
         verifies it's a new alarm, dispatches Telegram photo alerts, and updates last_processed_alarm_id.
@@ -259,6 +270,9 @@ class ImouPoller:
                 else:
                     alarm_list = []
 
+            # Track alarm windows
+            self.last_alarm_check_time = now_dt.isoformat()
+
             if not alarm_list:
                 return None
 
@@ -294,8 +308,12 @@ class ImouPoller:
                                 return alarm_id
             return None
         except Exception as e:
-            logger.exception("Exception in check_human_alarms: %s", str(e))
+            logger.exception("Exception in check_for_human_alarms: %s", str(e))
             return None
+
+    def check_human_alarms(self) -> Optional[str]:
+        """Backward compatibility wrapper for check_for_human_alarms."""
+        return self.check_for_human_alarms()
 
     def _run_loop(self):
         logger.info("Imou active polling thread started. Interval: %d seconds", self.poll_interval_seconds)
