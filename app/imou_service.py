@@ -65,11 +65,10 @@ class ImouService:
 
         url = "https://openapi-sg.easy4ip.com/openapi/accessToken"
         current_time = int(now)
-        import string
-        random_nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        random_nonce = str(uuid.uuid4()).replace("-", "")
         app_secret = str(self.config.IMOU_APP_SECRET).strip()
         app_id = str(self.config.IMOU_APP_ID).strip()
-        random_uuid_str = str(uuid.uuid4())
+        random_uuid_str = str(uuid.uuid4()).replace("-", "")
 
         sign_string = f"time:{current_time},nonce:{random_nonce},appSecret:{app_secret}"
         computed_sign = hashlib.md5(sign_string.encode('utf-8')).hexdigest().lower()
@@ -142,8 +141,7 @@ class ImouService:
 
         url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/deviceOnline"
         system_time = int(time.time())
-        import string
-        nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        nonce = str(uuid.uuid4()).replace("-", "")
         sign = self._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
 
         payload = {
@@ -159,7 +157,7 @@ class ImouService:
                 "accessToken": access_token,
                 "deviceId": device_id
             },
-            "id": str(system_time)
+            "id": str(uuid.uuid4()).replace("-", "")
         }
 
         logger.info("Querying Imou device online status for device '%s'", device_id)
@@ -217,8 +215,7 @@ class ImouService:
 
         url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/setDeviceSnapEnhanced"
         system_time = int(time.time())
-        import random, string
-        nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        nonce = str(uuid.uuid4()).replace("-", "")
         sign = self._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
 
         payload = {
@@ -235,7 +232,7 @@ class ImouService:
                 "deviceId": device_id,
                 "channelId": str(channel_id)
             },
-            "id": str(system_time)
+            "id": str(uuid.uuid4()).replace("-", "")
         }
 
         logger.info("Triggering setDeviceSnapEnhanced for device '%s' channel '%s'", device_id, channel_id)

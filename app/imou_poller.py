@@ -209,7 +209,7 @@ class ImouPoller:
         # Generate system header parameters
         system_time = int(time.time())
         import random, string, uuid, requests
-        nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        nonce = str(uuid.uuid4()).replace("-", "")
         sign = self.imou_service._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
 
         # Generate begin/end time in 'yyyy-MM-dd HH:mm:ss' format
@@ -235,7 +235,7 @@ class ImouPoller:
                 "beginTime": begin_time,
                 "endTime": end_time
             },
-            "id": str(uuid.uuid4())
+            "id": str(uuid.uuid4()).replace("-", "")
         }
 
         url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/getAlarmMessageList"
