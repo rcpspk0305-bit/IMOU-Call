@@ -1,9 +1,21 @@
 import sys
 import os
 
-# Ensure system path isolation so sub-modules in /app resolve seamlessly
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'app')))
+# ==============================================================================
+# 1. CRITICAL RUNTIME SYSTEM PATH CONFIGURATION
+# ==============================================================================
+current_dir = os.path.abspath(os.path.dirname(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+app_dir = os.path.abspath(os.path.join(current_dir, 'app'))
+if app_dir not in sys.path:
+    sys.path.insert(0, app_dir)
+
+# Force immediate eager loading on the main execution thread to eliminate KeyError collisions
+import app.config
+import app.supabase_service
+import app.imou_poller
+import app.telegram_service
 
 import pandas as pd
 import streamlit as st
@@ -34,7 +46,7 @@ def format_to_ist_str(val) -> str:
         return str(val)
 
 # ==============================================================================
-# 1. PAGE CONFIGISTRATION & DESIGN THEME
+# 2. PAGE CONFIGURATION & DESIGN THEME
 # ==============================================================================
 st.set_page_config(
     page_title="Imou-Exotel Security Dashboard",
@@ -71,50 +83,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-from app.config import Config
-from app.supabase_service import get_frontend_client, get_backend_service_client
-
 # Explicit Constants matching our Production Supabase SQL constraints
 SYSTEM_STATE_UUID = "00000000-0000-0000-0000-000000000001"
 
 def get_config(key: str, default: str = "") -> str:
-    val = getattr(Config, key.upper(), None)
+    val = getattr(app.config.Config, key.upper(), None)
     if val is not None:
         return str(val)
     return default
 
 # ==============================================================================
-# 2. CLIENT SUBSTANTIATION & BACKGROUND DAEMONS
+# 3. CLIENT INSTANTIATION
 # ==============================================================================
 @st.cache_resource
 def get_supabase_client() -> Client:
     try:
-        return get_backend_service_client()
+        return app.supabase_service.get_backend_service_client()
     except Exception as e:
         st.warning(f"⚠️ Service role Supabase client initialization failed: {str(e)}")
         st.stop()
-
-def start_background_workers() -> bool:
-    """Fires background tracking engines inside standalone daemon threads exactly once."""
-    if st.session_state.get('workers_initialized', False):
-        return True
-
-    try:
-        from app.imou_poller import imou_poller
-        from app.telegram_service import telegram_bot_poller
-        
-        imou_poller.start()
-        telegram_bot_poller.start()
-        st.session_state['workers_initialized'] = True
-        return True
-    except Exception:
-        return False
-
-# Initialize Background Routines
-if 'workers_initialized' not in st.session_state:
-    st.session_state['workers_initialized'] = False
-
-start_background_workers()
 
 try:
     supabase = get_supabase_client()
@@ -124,12 +111,12 @@ except Exception as e:
 
 auth_supabase = None
 try:
-    auth_supabase = get_frontend_client()
+    auth_supabase = app.supabase_service.get_frontend_client()
 except Exception as e:
     st.error(f"Failed to initialize public Anon Supabase auth client: {str(e)}")
 
 # ==============================================================================
-# 3. AUTHENTICATION CONTROLS
+# 4. AUTHENTICATION CONTROLS
 # ==============================================================================
 if "user" not in st.session_state:
     st.session_state["user"] = None
@@ -192,7 +179,7 @@ if st.session_state["user"] is None:
     st.stop()
 
 # ==============================================================================
-# 4. ADMIN USER INTERFACE SIDEBAR PANEL
+# 5. ADMIN USER INTERFACE SIDEBAR PANEL
 # ==============================================================================
 st.sidebar.markdown("### 👤 User Information")
 st.sidebar.write(f"Logged in as: **{st.session_state['user'].email}**")
@@ -252,7 +239,7 @@ with left_col:
         st.success("✅ **SYSTEM ACTIVE**: Background threads are polling camera feeds and will automatically trigger telephone and message alerts upon offline states.")
 
 # ==============================================================================
-# 5. LIVE METRICS & PLOTLY TIME HISTORY PLOT
+# 6. LIVE METRICS & PLOTLY TIME HISTORY PLOT
 # ==============================================================================
 with right_col:
     st.subheader("📈 System Telemetry Metrics")
@@ -310,7 +297,7 @@ with right_col:
         st.info("No recorded offline alerts found in Supabase logs.")
 
 # ==============================================================================
-# 6.INTERACTIVE HISTORICAL LOGGER DATA TABLE
+# 7. INTERACTIVE HISTORICAL LOGGER DATA TABLE
 # ==============================================================================
 st.write("---")
 st.subheader("📋 Telemetry Logs History (Recent 100 Alert Cycles)")
@@ -343,3 +330,23 @@ if logs_data:
     )
 else:
     st.info("No logs are currently stored in the database.")
+
+# ==============================================================================
+# 8. GUARANTEED SCRIPT LIFECYCLE DEFERRABLE ACTIVATION GATES
+# ==============================================================================
+def start_background_workers() -> bool:
+    """Fires background tracking engines safely exactly once per app lifespan."""
+    if st.session_state.get('workers_initialized', False):
+        return True
+
+    try:
+        # Pre-cached safely from the main thread definitions above
+        app.imou_poller.imou_poller.start()
+        app.telegram_service.telegram_bot_poller.start()
+        st.session_state['workers_initialized'] = True
+        return True
+    except Exception:
+        return False
+
+# Trigger the background loops here at the absolute bottom of execution
+start_background_workers()
