@@ -74,6 +74,45 @@ def send_telegram_photo(photo_url: str, caption: str, chat_id: Optional[str] = N
         logger.exception("Network exception sending Telegram photo alert: %s", str(e))
         return False
 
+def send_telegram_photo_stream(photo_url: str, caption: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
+    """
+    Downloads the photo from photo_url and uploads it to Telegram as a multipart file stream.
+    """
+    token = getattr(config, "TELEGRAM_BOT_TOKEN", None) or Config.TELEGRAM_BOT_TOKEN
+    target_chat_id = chat_id or getattr(config, "TELEGRAM_ALLOWED_CHAT_ID", None) or Config.TELEGRAM_ALLOWED_CHAT_ID
+
+    if not token or token == "YOUR_TELEGRAM_BOT_TOKEN" or not target_chat_id or target_chat_id == "YOUR_TELEGRAM_ALLOWED_CHAT_ID":
+        logger.warning("Telegram photo stream alert skipped: Token or chat ID not configured.")
+        return False
+
+    try:
+        # Download the image content
+        img_resp = requests.get(photo_url, timeout=15)
+        if img_resp.status_code != 200:
+            logger.error("Failed to download alarm image from %s: HTTP %d", photo_url, img_resp.status_code)
+            return False
+
+        url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        files = {
+            "photo": ("alarm_snapshot.jpg", img_resp.content, "image/jpeg")
+        }
+        data = {
+            "chat_id": target_chat_id,
+            "caption": caption,
+            "parse_mode": "Markdown"
+        }
+        
+        response = requests.post(url, data=data, files=files, timeout=20)
+        if response.status_code == 200:
+            logger.info("Telegram photo stream alert sent successfully to chat_id '%s'", target_chat_id)
+            return True
+        else:
+            logger.error("Failed to send Telegram photo stream. Status: %d, Response: %s", response.status_code, response.text)
+            return False
+    except Exception as e:
+        logger.exception("Exception in send_telegram_photo_stream: %s", str(e))
+        return False
+
 def send_telegram_notification(text: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
     """
     Sends a text message notification via Telegram Bot API to TELEGRAM_ALLOWED_CHAT_ID.

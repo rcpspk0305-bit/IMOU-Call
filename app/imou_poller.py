@@ -78,6 +78,12 @@ class ImouPoller:
             logger.error("Active poll failed: Could not query device online status for '%s'. Error: %s", self.device_id, err)
             return {"status": "error", "error": f"Status query error: {err}"}
 
+        # Check for human detection alarms via getAlarmMessageList
+        try:
+            self.check_human_alarms()
+        except Exception as ex_err:
+            logger.exception("Error checking human detection alarms: %s", str(ex_err))
+
         # Step 3: Trigger action based on status
         if is_online:
             if self.last_known_state == "OFFLINE":
@@ -188,6 +194,106 @@ class ImouPoller:
                 "call_triggered": alert_fired,
                 "call_result": call_result
             }
+
+    def check_human_alarms(self) -> list:
+        """
+        Hits the Imou Open API 'getAlarmMessageList' endpoint, filters for human detection alarms,
+        and dispatches Telegram photo alerts.
+        """
+        if not hasattr(self, "processed_alarm_ids"):
+            self.processed_alarm_ids = set()
+
+        token, err = self.imou_service.get_access_token()
+        if err or not token:
+            logger.error("Failed to retrieve Imou access token for getAlarmMessageList: %s", err)
+            return []
+
+        # Generate system header parameters
+        system_time = int(time.time())
+        import random, string, uuid, requests
+        nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+        sign = self.imou_service._generate_signature(system_time, nonce, self.config.IMOU_APP_SECRET)
+
+        # Generate begin/end time in 'yyyy-MM-dd HH:mm:ss' format
+        import datetime
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        begin_dt = now_dt - datetime.timedelta(hours=2) # poll recent 2 hours
+        begin_time = begin_dt.strftime("%Y-%m-%d %H:%M:%S")
+        end_time = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        payload = {
+            "system": {
+                "ver": "1.1",
+                "sign": sign,
+                "appId": self.config.IMOU_APP_ID,
+                "time": system_time,
+                "nonce": nonce
+            },
+            "params": {
+                "token": token,
+                "deviceId": self.device_id,
+                "channelId": "0",
+                "count": 10,
+                "beginTime": begin_time,
+                "endTime": end_time
+            },
+            "id": str(uuid.uuid4())
+        }
+
+        url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/getAlarmMessageList"
+        logger.info("Calling getAlarmMessageList for device %s", self.device_id)
+        
+        try:
+            from app.imou_service import _execute_with_retry
+            def op():
+                return requests.post(url, json=payload, timeout=10)
+            response = _execute_with_retry(op)
+            if response.status_code != 200:
+                logger.error("getAlarmMessageList request failed: HTTP %d: %s", response.status_code, response.text)
+                return []
+
+            data = response.json()
+            result = data.get("result", {})
+            alarm_list = result.get("data", {}).get("alarms", []) or result.get("alarms", []) or data.get("alarms", [])
+            if not isinstance(alarm_list, list):
+                if isinstance(result.get("data"), list):
+                    alarm_list = result["data"]
+                else:
+                    alarm_list = []
+
+            dispatched = []
+            from app.telegram_service import send_telegram_photo_stream
+            
+            for alarm in alarm_list:
+                if not isinstance(alarm, dict):
+                    continue
+                event_desc = str(alarm.get("name") or alarm.get("type") or alarm.get("eventType") or "").lower()
+                alarm_id = alarm.get("alarmId") or alarm.get("msgId")
+                
+                if alarm_id and alarm_id in self.processed_alarm_ids:
+                    continue
+                
+                # Check if event contains human identifiers
+                if "human" in event_desc or "person" in event_desc or "people" in event_desc:
+                    pic_url = alarm.get("picUrl") or alarm.get("picurl") or alarm.get("pic_url")
+                    timestamp = alarm.get("time") or alarm.get("timestamp")
+                    
+                    if pic_url:
+                        caption = f"⚠️ *Security Alert: Human Detected!*\nDevice: `{self.device_id}`\nTime: `{timestamp}`"
+                        sent = send_telegram_photo_stream(pic_url, caption, config=self.config)
+                        if sent:
+                            dispatched.append(alarm_id)
+                            if alarm_id:
+                                self.processed_alarm_ids.add(alarm_id)
+                                
+            # Keep set size bounded
+            while len(self.processed_alarm_ids) > 100:
+                self.processed_alarm_ids.pop()
+                
+            return dispatched
+        except Exception as e:
+            logger.exception("Exception in check_human_alarms: %s", str(e))
+            return []
 
     def _run_loop(self):
         logger.info("Imou active polling thread started. Interval: %d seconds", self.poll_interval_seconds)

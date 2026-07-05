@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from app.imou_poller import ImouPoller
 
 def test_poller_device_online():
@@ -105,4 +105,69 @@ def test_escalated_alerting_lifecycle():
     assert poller.last_known_state == "ONLINE"
     assert poller.offline_alerts_sent == 0
     assert poller.last_offline_alert_time == 0.0
+
+@patch("requests.post")
+@patch("requests.get")
+def test_check_human_alarms_dispatch(mock_get, mock_post):
+    from unittest.mock import patch
+    mock_service = MagicMock()
+    mock_service.get_access_token.return_value = ("mock_token", None)
+    mock_service._generate_signature.return_value = "mock_sig"
+    
+    # Mock alarm API response
+    mock_alarm_response = MagicMock()
+    mock_alarm_response.status_code = 200
+    mock_alarm_response.json.return_value = {
+        "result": {
+            "data": {
+                "alarms": [
+                    {
+                        "alarmId": "msg_111",
+                        "name": "human detection event",
+                        "picUrl": "https://example.com/alarm1.jpg",
+                        "time": "2026-07-05 12:00:00"
+                    },
+                    {
+                        "alarmId": "msg_222",
+                        "name": "normal motion",
+                        "picUrl": "https://example.com/alarm2.jpg",
+                        "time": "2026-07-05 12:05:00"
+                    }
+                ]
+            }
+        }
+    }
+    
+    # Mock Telegram response
+    mock_telegram_response = MagicMock()
+    mock_telegram_response.status_code = 200
+    
+    # Mock requests post side effects
+    mock_post.side_effect = [mock_alarm_response, mock_telegram_response]
+    
+    # Mock requests get for image download
+    mock_image_response = MagicMock()
+    mock_image_response.status_code = 200
+    mock_image_response.content = b"fake image bytes"
+    mock_get.return_value = mock_image_response
+
+    poller = ImouPoller(
+        service=mock_service,
+        device_id="CAM_ALARM_TEST"
+    )
+    
+    # Run human alarms check
+    dispatched = poller.check_human_alarms()
+    
+    # Verify only the human alarm was dispatched
+    assert dispatched == ["msg_111"]
+    assert "msg_111" in poller.processed_alarm_ids
+    assert "msg_222" not in poller.processed_alarm_ids
+    
+    # Verify image download was requested
+    mock_get.assert_called_once_with("https://example.com/alarm1.jpg", timeout=15)
+    
+    # Verify both requests.post were called (one for getAlarmMessageList, one for sendPhoto)
+    assert mock_post.call_count == 2
+
 
