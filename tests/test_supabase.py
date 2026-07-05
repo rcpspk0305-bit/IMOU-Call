@@ -60,9 +60,10 @@ def test_log_camera_status_success(mock_supabase):
     mock_supabase.table.assert_called_with("camera_logs")
     mock_insert.insert.assert_called_with({
         "device_id": "CAM_123",
-        "status": "offline",
+        "event_type": "offline",
         "message": "Camera is down",
-        "notification_sent": True
+        "exotel_call_triggered": True,
+        "telegram_alert_sent": True
     })
 
 def test_fetch_recent_logs_success(mock_supabase):
@@ -82,6 +83,6 @@ def test_fetch_recent_logs_success(mock_supabase):
     assert logs[0]["device_id"] == "CAM_1"
     mock_supabase.table.assert_called_with("camera_logs")
     mock_select.select.assert_called_with("*")
-    mock_order.order.assert_called_with("created_at", desc=True)
+    mock_order.order.assert_called_with("triggered_at", desc=True)
     mock_limit.limit.assert_called_with(5)
 

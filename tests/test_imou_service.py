@@ -29,7 +29,7 @@ def test_get_access_token_success(mock_post):
     assert token == "mock_token_abc123"
     mock_post.assert_called_once()
     args, kwargs = mock_post.call_args
-    assert "https://openapi.easy4ip.com/openapi/accessToken" in args[0]
+    assert "https://openapi-sg.easy4ip.com/openapi/accessToken" in args[0]
     assert kwargs["json"]["system"]["appId"] == "test_app_id"
 
 @patch("requests.post")

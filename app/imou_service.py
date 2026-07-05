@@ -63,7 +63,7 @@ class ImouService:
             logger.debug("Using cached Imou access token. Expires in %d seconds", int(self._token_expires_at - now))
             return self._cached_token, None
 
-        url = f"{self.config.IMOU_API_BASE_URL.rstrip('/')}/accessToken"
+        url = "https://openapi-sg.easy4ip.com/openapi/accessToken"
         current_time = int(now)
         import string
         random_nonce = "".join(random.choices(string.ascii_letters + string.digits, k=32))

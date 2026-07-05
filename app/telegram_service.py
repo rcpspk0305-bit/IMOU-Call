@@ -9,6 +9,71 @@ from app.lifecycle import app_lifecycle
 
 logger = logging.getLogger(__name__)
 
+def format_to_ist(dt_val) -> str:
+    """
+    Converts a datetime object, ISO string, or float timestamp to Asia/Kolkata timezone (IST)
+    and formats it as 'YYYY-MM-DD HH:mm:ss IST'.
+    """
+    if dt_val is None:
+        return "Never"
+        
+    try:
+        from datetime import datetime, timezone, timedelta
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Kolkata")
+        except Exception:
+            tz = timezone(timedelta(hours=5, minutes=30))
+
+        if isinstance(dt_val, (int, float)):
+            if dt_val <= 0:
+                return "Never"
+            dt = datetime.fromtimestamp(dt_val, tz=timezone.utc)
+        elif isinstance(dt_val, str):
+            val_clean = dt_val.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(val_clean)
+        elif isinstance(dt_val, datetime):
+            dt = dt_val
+        else:
+            return str(dt_val)
+
+        dt_ist = dt.astimezone(tz)
+        return dt_ist.strftime("%Y-%m-%d %H:%M:%S IST")
+    except Exception as e:
+        logger.warning("Error localizing timestamp '%s' to IST: %s", str(dt_val), str(e))
+        return str(dt_val)
+
+def send_telegram_photo(photo_url: str, caption: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
+    """
+    Sends a photo alert via Telegram Bot API using a URL.
+    """
+    token = getattr(config, "TELEGRAM_BOT_TOKEN", None) or Config.TELEGRAM_BOT_TOKEN
+    target_chat_id = chat_id or getattr(config, "TELEGRAM_ALLOWED_CHAT_ID", None) or Config.TELEGRAM_ALLOWED_CHAT_ID
+
+    if not token or token == "YOUR_TELEGRAM_BOT_TOKEN" or not target_chat_id or target_chat_id == "YOUR_TELEGRAM_ALLOWED_CHAT_ID":
+        logger.warning("Telegram photo alert skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_ALLOWED_CHAT_ID not configured.")
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    payload = {
+        "chat_id": target_chat_id,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "Markdown"
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            logger.info("Telegram photo alert sent successfully to chat_id '%s'", target_chat_id)
+            return True
+        else:
+            logger.error("Failed to send Telegram photo alert. Status: %d, Response: %s", response.status_code, response.text)
+            return False
+    except requests.RequestException as e:
+        logger.exception("Network exception sending Telegram photo alert: %s", str(e))
+        return False
+
 def send_telegram_notification(text: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
     """
     Sends a text message notification via Telegram Bot API to TELEGRAM_ALLOWED_CHAT_ID.
@@ -52,10 +117,7 @@ class TelegramBotPoller:
         self._lock = threading.Lock()
 
     def _format_timestamp(self, ts: float) -> str:
-        if ts <= 0:
-            return "Never"
-        dt = datetime.datetime.fromtimestamp(ts)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return format_to_ist(ts)
 
     def process_command(self, text: str, sender_chat_id: str):
         """
@@ -105,7 +167,7 @@ class TelegramBotPoller:
                 logs_res = client.table("camera_logs").select("event_type", "triggered_at").order("triggered_at", desc=True).limit(1).execute()
                 if logs_res.data:
                     last_state = logs_res.data[0].get("event_type", "UNKNOWN").upper()
-                    last_timestamp = logs_res.data[0].get("triggered_at", "Never")
+                    last_timestamp = format_to_ist(logs_res.data[0].get("triggered_at"))
             except Exception as e:
                 logger.error("Failed to query database for /status command: %s", str(e))
                 last_state = "DATABASE_OFFLINE"
@@ -139,12 +201,31 @@ class TelegramBotPoller:
 
         elif cmd == "/checknow":
             from app.imou_poller import imou_poller
+            from app.supabase_service import get_backend_service_client
+            
+            device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
             send_telegram_notification("🔍 <b>Executing instant Imou API camera check...</b>", chat_id=sender_chat_id, config=self.config)
             res = imou_poller.poll_once(ignore_pause=True)
             
             if res.get("status") == "success":
                 is_online = res.get("is_online", True)
                 state_emoji = "🟢 ONLINE" if is_online else "🔴 OFFLINE"
+                
+                # Write instant check state update to Supabase camera_logs table
+                try:
+                    client = get_backend_service_client()
+                    log_data = {
+                        "device_id": device_id,
+                        "event_type": "online" if is_online else "offline",
+                        "message": f"Manual checknow poll: Device is {'ONLINE' if is_online else 'OFFLINE'}.",
+                        "exotel_call_triggered": not is_online,
+                        "telegram_alert_sent": True
+                    }
+                    client.table("camera_logs").insert(log_data).execute()
+                    logger.info("Successfully logged checknow status to database.")
+                except Exception as log_err:
+                    logger.error("Failed to write checknow status to database logs: %s", str(log_err))
+                
                 reply = f"<b>Instant Check Result:</b> Device <code>{res.get('device_id')}</code> is {state_emoji}."
             else:
                 reply = f"❌ <b>Instant Check Failed:</b> {res.get('error') or res.get('reason')}"

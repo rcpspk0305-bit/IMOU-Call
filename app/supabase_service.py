@@ -147,9 +147,10 @@ def log_camera_status(device_id: str, status: str, message: str, notification_se
     try:
         data = {
             "device_id": device_id,
-            "status": status,
+            "event_type": status,
             "message": message,
-            "notification_sent": notification_sent
+            "exotel_call_triggered": notification_sent,
+            "telegram_alert_sent": notification_sent
         }
         def op():
             return supabase_client.table("camera_logs").insert(data).execute()
@@ -172,7 +173,7 @@ def fetch_recent_logs(limit: int = 50) -> List[Dict[str, Any]]:
         def op():
             return supabase_client.table("camera_logs")\
                 .select("*")\
-                .order("created_at", desc=True)\
+                .order("triggered_at", desc=True)\
                 .limit(limit)\
                 .execute()
         response = _execute_with_retry(op)

@@ -72,7 +72,7 @@ class Config:
     IMOU_APP_SECRET = get_secret("imou", "app_secret", "YOUR_IMOU_APP_SECRET")
     IMOU_DEVICE_ID = get_secret("imou", "device_id", "YOUR_IMOU_DEVICE_ID")
     IMOU_POLL_INTERVAL_SECONDS = int(get_secret("imou", "poll_interval_seconds", "600"))
-    IMOU_API_BASE_URL = get_secret("imou", "api_base_url", "https://openapi.easy4ip.com/openapi")
+    IMOU_API_BASE_URL = get_secret("imou", "api_base_url", "https://openapi-sg.easy4ip.com/openapi")
 
     # Telegram Bot Control Plane Credentials
     TELEGRAM_BOT_TOKEN = get_secret("telegram", "bot_token", "YOUR_TELEGRAM_BOT_TOKEN")

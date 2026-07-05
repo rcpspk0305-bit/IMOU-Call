@@ -52,9 +52,10 @@ class SupabaseDbClient:
             try:
                 data = {
                     "device_id": device_id,
-                    "status": "offline",
+                    "event_type": "offline",
                     "message": message,
-                    "notification_sent": True
+                    "exotel_call_triggered": True,
+                    "telegram_alert_sent": True
                 }
                 response = self.client.table("camera_logs").insert(data).execute()
                 if response.data:

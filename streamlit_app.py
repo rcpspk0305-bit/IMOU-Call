@@ -10,6 +10,29 @@ import streamlit as st
 import plotly.express as px
 from supabase import create_client, Client
 
+# Helper to format and localize ISO/UTC timestamps to IST string
+def format_to_ist_str(val) -> str:
+    if pd.isna(val):
+        return "Never"
+    try:
+        from datetime import datetime, timezone, timedelta
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Kolkata")
+        except Exception:
+            tz = timezone(timedelta(hours=5, minutes=30))
+
+        if isinstance(val, str):
+            val_clean = val.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(val_clean)
+        else:
+            dt = pd.to_datetime(val).to_pydatetime()
+            
+        dt_ist = dt.astimezone(tz)
+        return dt_ist.strftime("%Y-%m-%d %H:%M:%S IST")
+    except Exception:
+        return str(val)
+
 # ==============================================================================
 # 1. PAGE CONFIGISTRATION & DESIGN THEME
 # ==============================================================================
@@ -250,8 +273,19 @@ with right_col:
     # Render Plotly visual graphing frame
     if logs_data:
         df = pd.DataFrame(logs_data)
-        df["triggered_at"] = pd.to_datetime(df["triggered_at"])
-        df["date"] = df["triggered_at"].dt.date
+        triggered_at_dt = pd.to_datetime(df["triggered_at"])
+        if triggered_at_dt.dt.tz is None:
+            triggered_at_dt = triggered_at_dt.dt.localize("UTC")
+            
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Kolkata")
+        except Exception:
+            from datetime import timezone, timedelta
+            tz = timezone(timedelta(hours=5, minutes=30))
+            
+        df["triggered_at_ist"] = triggered_at_dt.dt.tz_convert(tz)
+        df["date"] = df["triggered_at_ist"].dt.date
         alert_counts = df.groupby("date").size().reset_index(name="Alerts Count")
 
         fig = px.bar(
@@ -276,22 +310,25 @@ st.subheader("📋 Telemetry Logs History (Recent 100 Alert Cycles)")
 
 if logs_data:
     df_logs = pd.DataFrame(logs_data)
-    df_logs["triggered_at"] = pd.to_datetime(df_logs["triggered_at"])
+    
+    # Format and convert the timestamp column explicitly to IST string representation
+    df_logs["Time Stamp"] = df_logs["triggered_at"].apply(format_to_ist_str)
     
     # Map the dispatch notification checkboxes by combining the Exotel & Telegram states
-    df_logs["Exotel/Telegram Dispatched"] = df_logs["exotel_call_triggered"] & df_logs["telegram_alert_sent"]
+    exotel_col = df_logs["exotel_call_triggered"].fillna(False) if "exotel_call_triggered" in df_logs.columns else False
+    telegram_col = df_logs["telegram_alert_sent"].fillna(False) if "telegram_alert_sent" in df_logs.columns else False
+    df_logs["Exotel/Telegram Dispatched"] = exotel_col | telegram_col
     
     # Clean up column structure display schemas
     df_logs = df_logs.rename(columns={
         "device_id": "Device ID",
-        "event_type": "Event Type",
-        "triggered_at": "Time Stamp"
+        "event_type": "Event Type"
     })
     
     st.dataframe(
         df_logs[["Device ID", "Event Type", "Time Stamp", "Exotel/Telegram Dispatched"]],
         column_config={
-            "Time Stamp": st.column_config.DatetimeColumn("Time Stamp", format="YYYY-MM-DD HH:mm:ss"),
+            "Time Stamp": st.column_config.TextColumn("Time Stamp"),
             "Exotel/Telegram Dispatched": st.column_config.CheckboxColumn("Exotel/Telegram Dispatched")
         },
         use_container_width=True,

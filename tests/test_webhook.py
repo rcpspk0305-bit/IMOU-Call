@@ -60,3 +60,20 @@ def test_process_imou_webhook_payload_service_stopping():
         assert "shutting down" in res["error"].lower()
     finally:
         app_lifecycle._lifecycle_flag.set()
+
+@patch("app.telegram_service.send_telegram_photo")
+def test_process_imou_webhook_payload_human_detection(mock_send_photo):
+    mock_send_photo.return_value = True
+    payload = {
+        "params": {
+            "name": "human",
+            "picUrl": "https://example.com/alarm.jpg",
+            "time": 1720101234
+        }
+    }
+    res = process_imou_webhook_payload(payload)
+    assert res["message"] == "Human detection alarm processed successfully"
+    assert res["triggered"] is True
+    assert res["pic_url"] == "https://example.com/alarm.jpg"
+    assert res["event"] == "human"
+    mock_send_photo.assert_called_once_with("https://example.com/alarm.jpg", "⚠️ *Security Alert: Human Detected at Home!*")
