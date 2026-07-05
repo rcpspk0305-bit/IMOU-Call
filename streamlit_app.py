@@ -96,17 +96,24 @@ def get_supabase_client() -> Client:
 
 def start_background_workers() -> bool:
     """Fires background tracking engines inside standalone daemon threads exactly once."""
+    if st.session_state.get('workers_initialized', False):
+        return True
+
     try:
         from app.imou_poller import imou_poller
         from app.telegram_service import telegram_bot_poller
         
         imou_poller.start()
         telegram_bot_poller.start()
+        st.session_state['workers_initialized'] = True
         return True
     except Exception:
         return False
 
 # Initialize Background Routines
+if 'workers_initialized' not in st.session_state:
+    st.session_state['workers_initialized'] = False
+
 start_background_workers()
 
 try:
