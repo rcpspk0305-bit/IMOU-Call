@@ -93,12 +93,13 @@ def trigger_exotel_call(device_id: str, config: type = Config) -> dict:
 
     # Append offline log to Supabase 'logs' table before executing notification sequences
     try:
-        from app.supabase_service import log_camera_status
+        from app.supabase_service import log_camera_status, supabase_client
         log_camera_status(
-            device_id=device_id,
-            status="offline",
-            message=f"Camera {device_id} detected offline. Notification sequence initiated.",
-            notification_sent=True
+            supabase_client,
+            device_id,
+            "offline",
+            True,
+            True
         )
     except Exception as e:
         logger.exception("Failed to log offline state to Supabase: %s", str(e))

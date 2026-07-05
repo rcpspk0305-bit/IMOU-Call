@@ -137,30 +137,26 @@ def set_system_paused(paused: bool) -> bool:
         logger.exception("Error updating is_paused state in Supabase after retries: %s", str(e))
     return False
 
-def log_camera_status(device_id: str, status: str, message: str, notification_sent: bool = True) -> bool:
-    """
-    Appends a new log row to the 'camera_logs' table to capture status changes or alerts.
-    """
-    if supabase_client is None:
-        logger.error("Supabase client is not initialized. Cannot log status change.")
-        return False
+# app/supabase_service.py
+
+def log_camera_status(supabase_client, device_id, event_type, exotel_success, telegram_success):
+    # Construct data matching ONLY the explicit database schema columns
+    clean_payload = {
+        "device_id": str(device_id),
+        "event_type": str(event_type), # 'offline' or 'online'
+        "exotel_call_triggered": bool(exotel_success),
+        "telegram_alert_sent": bool(telegram_success)
+        # Note: 'triggered_at' auto-generates on the database side
+    }
+    
+    def op():
+        return supabase_client.table("camera_logs").insert(clean_payload).execute()
+        
     try:
-        data = {
-            "device_id": device_id,
-            "event_type": status,
-            "message": message,
-            "exotel_call_triggered": notification_sent,
-            "telegram_alert_sent": notification_sent
-        }
-        def op():
-            return supabase_client.table("camera_logs").insert(data).execute()
-        response = _execute_with_retry(op)
-        if isinstance(response.data, list) and len(response.data) > 0:
-            logger.info("Successfully logged status change in Supabase camera_logs.")
-            return True
+        return _execute_with_retry(op)
     except Exception as e:
-        logger.exception("Error writing status log to Supabase after retries: %s", str(e))
-    return False
+        print(f"Error writing status log to Supabase: {str(e)}")
+        return None
 
 def fetch_recent_logs(limit: int = 50) -> List[Dict[str, Any]]:
     """

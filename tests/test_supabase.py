@@ -56,12 +56,12 @@ def test_log_camera_status_success(mock_supabase):
     mock_insert.insert.return_value = mock_execute
     mock_execute.execute.return_value = MagicMock(data=[{"id": 123}])
     
-    assert log_camera_status("CAM_123", "offline", "Camera is down") is True
+    res = log_camera_status(mock_supabase, "CAM_123", "offline", True, True)
+    assert res is not None
     mock_supabase.table.assert_called_with("camera_logs")
     mock_insert.insert.assert_called_with({
         "device_id": "CAM_123",
         "event_type": "offline",
-        "message": "Camera is down",
         "exotel_call_triggered": True,
         "telegram_alert_sent": True
     })
