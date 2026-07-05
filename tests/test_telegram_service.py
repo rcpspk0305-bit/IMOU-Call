@@ -26,8 +26,17 @@ def test_send_telegram_notification_success(mock_post):
     assert kwargs["json"]["chat_id"] == "999888777"
     assert "Test Alert Message" in kwargs["json"]["text"]
 
+@patch("app.supabase_service.set_system_paused")
+@patch("app.supabase_service.get_system_paused")
 @patch("app.telegram_service.send_telegram_notification")
-def test_telegram_commands_pause_and_resume(mock_send):
+def test_telegram_commands_pause_and_resume(mock_send, mock_get_paused, mock_set_paused):
+    local_state = {"paused": False}
+    mock_get_paused.side_effect = lambda *args, **kwargs: local_state["paused"]
+    def mock_set(val):
+        local_state["paused"] = val
+        return True
+    mock_set_paused.side_effect = mock_set
+
     poller = TelegramBotPoller(config=MockTelegramConfig)
 
     # 1. Test /pause
@@ -40,8 +49,17 @@ def test_telegram_commands_pause_and_resume(mock_send):
     assert app_lifecycle.is_paused is False
     mock_send.assert_called_with("✅ Monitoring resumed. Active tracking active.", chat_id="999888777", config=MockTelegramConfig)
 
+@patch("app.supabase_service.set_system_paused")
+@patch("app.supabase_service.get_system_paused")
 @patch("app.telegram_service.send_telegram_notification")
-def test_telegram_unauthorized_chat_id(mock_send):
+def test_telegram_unauthorized_chat_id(mock_send, mock_get_paused, mock_set_paused):
+    local_state = {"paused": False}
+    mock_get_paused.side_effect = lambda *args, **kwargs: local_state["paused"]
+    def mock_set(val):
+        local_state["paused"] = val
+        return True
+    mock_set_paused.side_effect = mock_set
+
     poller = TelegramBotPoller(config=MockTelegramConfig)
 
     # Attempt command from wrong chat ID
@@ -176,3 +194,63 @@ def test_telegram_testcall_command_failure(mock_trigger, mock_send):
     # Check that second send is failure notification
     args, kwargs = mock_send.call_args_list[1]
     assert "Test Call Failed" in args[0]
+
+@patch("app.supabase_service.set_system_paused")
+@patch("app.supabase_service.get_system_paused")
+@patch("app.telegram_service.send_telegram_notification")
+def test_telegram_command_group_suffix(mock_send, mock_get_paused, mock_set_paused):
+    local_state = {"paused": False}
+    mock_get_paused.side_effect = lambda *args, **kwargs: local_state["paused"]
+    def mock_set(val):
+        local_state["paused"] = val
+        return True
+    mock_set_paused.side_effect = mock_set
+
+    poller = TelegramBotPoller(config=MockTelegramConfig)
+    
+    # 1. Test /pause@MyCamExotelBot
+    app_lifecycle.is_paused = False
+    poller.process_command("/pause@MyCamExotelBot", sender_chat_id="999888777")
+    assert app_lifecycle.is_paused is True
+    mock_send.assert_called_with("⛔️ Monitoring paused. Exotel voice alerts disabled.", chat_id="999888777", config=MockTelegramConfig)
+
+    # 2. Test /resume@MyCamExotelBot
+    poller.process_command("/resume@MyCamExotelBot", sender_chat_id="999888777")
+    assert app_lifecycle.is_paused is False
+    mock_send.assert_called_with("✅ Monitoring resumed. Active tracking active.", chat_id="999888777", config=MockTelegramConfig)
+
+@patch("app.supabase_service.set_system_paused")
+@patch("app.supabase_service.get_system_paused")
+@patch("app.telegram_service.send_telegram_notification")
+def test_telegram_multi_id_verification(mock_send, mock_get_paused, mock_set_paused):
+    local_state = {"paused": False}
+    mock_get_paused.side_effect = lambda *args, **kwargs: local_state["paused"]
+    def mock_set(val):
+        local_state["paused"] = val
+        return True
+    mock_set_paused.side_effect = mock_set
+
+    # Configuration with comma-separated IDs
+    class MultiIdConfig:
+        TELEGRAM_BOT_TOKEN = "mock_bot_token_123"
+        TELEGRAM_ALLOWED_CHAT_ID = "999888777, 111222333"
+        IMOU_DEVICE_ID = "CAM_TEST_TELEGRAM"
+
+    poller = TelegramBotPoller(config=MultiIdConfig)
+
+    # 1. Valid sender_chat_id (999888777)
+    app_lifecycle.is_paused = False
+    poller.process_command("/pause", sender_chat_id="999888777")
+    assert app_lifecycle.is_paused is True
+    mock_send.assert_called_with("⛔️ Monitoring paused. Exotel voice alerts disabled.", chat_id="999888777", config=MultiIdConfig)
+
+    # 2. Valid from_user_id (111222333) in group chat (group_chat_id = -444555666)
+    app_lifecycle.is_paused = True
+    poller.process_command("/resume", sender_chat_id="-444555666", from_user_id="111222333")
+    assert app_lifecycle.is_paused is False
+    mock_send.assert_called_with("✅ Monitoring resumed. Active tracking active.", chat_id="-444555666", config=MultiIdConfig)
+
+    # 3. Unauthorized interaction (neither sender_chat_id nor from_user_id is allowed)
+    poller.process_command("/pause", sender_chat_id="777777777", from_user_id="888888888")
+    assert app_lifecycle.is_paused is False  # remains unchanged
+    mock_send.assert_called_with("⚠️ <b>Access Denied:</b> Unauthorized chat ID.", chat_id="777777777", config=MultiIdConfig)

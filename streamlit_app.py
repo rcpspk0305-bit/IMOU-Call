@@ -214,7 +214,7 @@ if logs_data:
     st.dataframe(
         df_logs[["Device ID", "Event Type", "Time Stamp", "Exotel/Telegram Dispatched"]],
         column_config={"Time Stamp": st.column_config.TextColumn("Time Stamp"), "Exotel/Telegram Dispatched": st.column_config.CheckboxColumn("Exotel/Telegram Dispatched")},
-        use_container_width=True, hide_index=True
+        width="stretch", hide_index=True
     )
 else:
     st.info("No logs are currently stored in the database.")

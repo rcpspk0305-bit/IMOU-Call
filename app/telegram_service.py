@@ -230,23 +230,30 @@ class TelegramBotPoller:
             logger.exception("Exception in handle_telegram_snapshot_command: %s", str(e))
             send_telegram_notification(f"❌ <b>Snapshot command error:</b> {str(e)}", chat_id=sender_chat_id, config=self.config)
 
-    def process_command(self, text: str, sender_chat_id: str):
+    def process_command(self, text: str, sender_chat_id: str, from_user_id: Optional[str] = None):
         """
         Processes incoming bot commands with TELEGRAM_ALLOWED_CHAT_ID security check.
+        Supports comma-separated multi-ID validation.
         """
-        allowed_chat_id = str(getattr(self.config, "TELEGRAM_ALLOWED_CHAT_ID", Config.TELEGRAM_ALLOWED_CHAT_ID)).strip()
-        sender_chat_id_str = str(sender_chat_id).strip()
+        authorized_chat_id = str(getattr(self.config, "TELEGRAM_ALLOWED_CHAT_ID", Config.TELEGRAM_ALLOWED_CHAT_ID)).strip()
+        
+        # 1. MULTI-ID PARSING
+        auth_list = [str(i).strip() for i in str(authorized_chat_id).split(",")]
+        
+        chat_id_str = str(sender_chat_id).strip()
+        user_id_str = str(from_user_id or sender_chat_id).strip()
 
-        # Security Check: Restrict commands to TELEGRAM_ALLOWED_CHAT_ID
-        if allowed_chat_id != "YOUR_TELEGRAM_ALLOWED_CHAT_ID" and sender_chat_id_str != allowed_chat_id:
-            logger.warning("Unauthorized Telegram command attempt from chat_id '%s' (Allowed: '%s')", sender_chat_id_str, allowed_chat_id)
-            send_telegram_notification("⚠️ <b>Access Denied:</b> Unauthorized chat ID.", chat_id=sender_chat_id, config=self.config)
-            return
+        # 2. DUAL VALIDATION
+        if "YOUR_TELEGRAM_ALLOWED_CHAT_ID" not in auth_list:
+            if chat_id_str not in auth_list and user_id_str not in auth_list:
+                logger.warning("Unauthorized Telegram command attempt from chat_id '%s', user_id '%s' (Allowed: %s)", chat_id_str, user_id_str, auth_list)
+                send_telegram_notification("⚠️ <b>Access Denied:</b> Unauthorized chat ID.", chat_id=sender_chat_id, config=self.config)
+                return
 
         # Extract base command string to support group chat syntax suffixes (e.g. /status@MyCamExotelBot)
         first_word = text.strip().split()[0] if text.strip().split() else ""
         base_command = first_word.split("@")[0].lower()
-        logger.info("Processing authorized Telegram command '%s' (base: '%s') from chat_id '%s'", first_word, base_command, sender_chat_id_str)
+        logger.info("Processing authorized Telegram command '%s' (base: '%s') from chat_id '%s'", first_word, base_command, chat_id_str)
 
         if base_command == "/pause":
             app_lifecycle.is_paused = True
@@ -391,9 +398,10 @@ class TelegramBotPoller:
                         message = update.get("message", {})
                         text = message.get("text", "")
                         sender_chat_id = str(message.get("chat", {}).get("id", ""))
+                        from_user_id = str(message.get("from", {}).get("id", ""))
                         
                         if text.startswith("/"):
-                            self.process_command(text, sender_chat_id)
+                            self.process_command(text, sender_chat_id, from_user_id=from_user_id)
                 elif response.status_code == 401:
                     logger.error("Telegram Bot Poller Unauthorized: Check TELEGRAM_BOT_TOKEN.")
                     break
