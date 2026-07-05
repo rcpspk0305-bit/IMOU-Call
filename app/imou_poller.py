@@ -35,13 +35,18 @@ class ImouPoller:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
+        # Track persistent state
+        self.last_known_state = "ONLINE"
+        self.offline_alerts_sent = 0
+        self.last_offline_alert_time = 0.0
+
     def poll_once(self, ignore_pause: bool = False) -> dict:
         """
         Executes a single polling cycle:
         1. Verify lifecycle and pause state.
         2. Fetch open API accessToken.
         3. Query device online status.
-        4. If offline, trigger Exotel call helper function and update device manager.
+        4. Trigger actions based on escalated alerting lifecycle rules.
         """
         if not app_lifecycle.is_running:
             logger.info("Imou poller poll_once skipped: application lifecycle is stopping.")
@@ -75,18 +80,112 @@ class ImouPoller:
 
         # Step 3: Trigger action based on status
         if is_online:
-            logger.info("Active poll result: Device '%s' is ONLINE. No alert needed.", self.device_id)
-            device_manager.handle_device_event(self.device_id, "online")
-            return {"status": "success", "device_id": self.device_id, "is_online": True}
+            if self.last_known_state == "OFFLINE":
+                logger.warning("Recovery detected: Device '%s' transitioned from OFFLINE back to ONLINE. Executing recovery alerts.", self.device_id)
+                call_result = None
+                
+                # Check if handler supports ignore_lockout / is_recovery (like mock vs real)
+                import inspect
+                try:
+                    sig = inspect.signature(self.call_handler)
+                    has_kwargs = 'ignore_lockout' in sig.parameters
+                except Exception:
+                    has_kwargs = False
+                
+                try:
+                    if has_kwargs or self.call_handler == trigger_exotel_call:
+                        call_result = self.call_handler(self.device_id, ignore_lockout=True, is_recovery=True)
+                    else:
+                        call_result = self.call_handler(self.device_id)
+                        from app.telegram_service import send_telegram_notification
+                        send_telegram_notification(
+                            f"✅ <b>CAMERA RECOVERY ALERT!</b>\n"
+                            f"Camera <code>{self.device_id}</code> is back ONLINE!",
+                            config=self.config
+                        )
+                except Exception as ex_err:
+                    logger.error("Error executing recovery alert handler: %s", str(ex_err))
+                
+                # System Reset: reset state immediately after online recovery alert executes
+                self.last_known_state = "ONLINE"
+                self.offline_alerts_sent = 0
+                self.last_offline_alert_time = 0.0
+                
+                device_manager.handle_device_event(self.device_id, "online")
+                return {
+                    "status": "success",
+                    "device_id": self.device_id,
+                    "is_online": True,
+                    "recovery_triggered": True,
+                    "call_result": call_result
+                }
+            else:
+                logger.info("Active poll result: Device '%s' is ONLINE. No alert needed.", self.device_id)
+                device_manager.handle_device_event(self.device_id, "online")
+                return {"status": "success", "device_id": self.device_id, "is_online": True}
         else:
-            logger.warning("Active poll result: Device '%s' is OFFLINE! Triggering Exotel call helper...", self.device_id)
+            logger.warning("Active poll result: Device '%s' is OFFLINE!", self.device_id)
+            self.last_known_state = "OFFLINE"
             device_manager.handle_device_event(self.device_id, "offline")
-            call_result = self.call_handler(self.device_id)
+            
+            call_result = None
+            alert_fired = False
+            
+            # Check if handler supports ignore_lockout / is_recovery (like mock vs real)
+            import inspect
+            try:
+                sig = inspect.signature(self.call_handler)
+                has_kwargs = 'ignore_lockout' in sig.parameters
+            except Exception:
+                has_kwargs = False
+            
+            if self.offline_alerts_sent == 0:
+                logger.warning("Offline state detected. Instantly firing Telegram alert and Exotel call.")
+                try:
+                    if has_kwargs or self.call_handler == trigger_exotel_call:
+                        call_result = self.call_handler(self.device_id, ignore_lockout=True, is_recovery=False)
+                    else:
+                        call_result = self.call_handler(self.device_id)
+                        from app.telegram_service import send_telegram_notification
+                        send_telegram_notification(
+                            f"🚨 <b>CAMERA OFFLINE ALERT!</b>\n"
+                            f"Camera <code>{self.device_id}</code> dropped offline!",
+                            config=self.config
+                        )
+                except Exception as ex_err:
+                    logger.error("Error executing offline alert handler (round 1): %s", str(ex_err))
+                self.offline_alerts_sent = 1
+                self.last_offline_alert_time = time.time()
+                alert_fired = True
+            elif self.offline_alerts_sent == 1:
+                elapsed = time.time() - self.last_offline_alert_time
+                if elapsed >= 150:
+                    logger.warning("Device still offline after %.1f seconds. Triggering second backup round.", elapsed)
+                    try:
+                        if has_kwargs or self.call_handler == trigger_exotel_call:
+                            call_result = self.call_handler(self.device_id, ignore_lockout=True, is_recovery=False)
+                        else:
+                            call_result = self.call_handler(self.device_id)
+                            from app.telegram_service import send_telegram_notification
+                            send_telegram_notification(
+                                f"🚨 <b>CAMERA OFFLINE ALERT!</b>\n"
+                                f"Camera <code>{self.device_id}</code> dropped offline!",
+                                config=self.config
+                            )
+                    except Exception as ex_err:
+                        logger.error("Error executing offline alert handler (round 2): %s", str(ex_err))
+                    self.offline_alerts_sent = 2
+                    alert_fired = True
+                else:
+                    logger.info("Device still offline, but backup interval not met. Elapsed: %.1f seconds.", elapsed)
+            else:
+                logger.info("Device still offline, but maximum alert limit reached (2 rounds). No further alerts fired.")
+
             return {
                 "status": "success",
                 "device_id": self.device_id,
                 "is_online": False,
-                "call_triggered": True,
+                "call_triggered": alert_fired,
                 "call_result": call_result
             }
 
