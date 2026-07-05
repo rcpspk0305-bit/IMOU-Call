@@ -217,7 +217,6 @@ class TelegramBotPoller:
                     log_data = {
                         "device_id": device_id,
                         "event_type": "online" if is_online else "offline",
-                        "message": f"Manual checknow poll: Device is {'ONLINE' if is_online else 'OFFLINE'}.",
                         "exotel_call_triggered": not is_online,
                         "telegram_alert_sent": True
                     }

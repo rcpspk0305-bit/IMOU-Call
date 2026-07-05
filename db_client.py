@@ -53,7 +53,6 @@ class SupabaseDbClient:
                 data = {
                     "device_id": device_id,
                     "event_type": "offline",
-                    "message": message,
                     "exotel_call_triggered": True,
                     "telegram_alert_sent": True
                 }

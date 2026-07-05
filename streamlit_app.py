@@ -5,7 +5,7 @@ import streamlit as st
 import plotly.express as px
 from supabase import create_client, Client
 
-# 1. Enforce absolute path resolution instantly
+# Isolate absolute directory runtime path logic
 current_dir = os.path.abspath(os.path.dirname(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
@@ -13,7 +13,7 @@ app_dir = os.path.abspath(os.path.join(current_dir, 'app'))
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
 
-# 2. Pre-cache dependencies on the main thread to block import race conditions
+# Eager import tracking vectors to insulate sys.modules mapping blocks
 import app.config
 import app.supabase_service
 import app.imou_poller
@@ -41,7 +41,6 @@ def format_to_ist_str(val) -> str:
     except Exception:
         return str(val)
 
-# Page Configurations
 st.set_page_config(
     page_title="Imou-Exotel Security Dashboard",
     page_icon="🛡️",
@@ -49,7 +48,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Explicit Production UUID Matrix
+st.markdown("""
+<style>
+    div[data-testid="stMetricValue"] { font-size: 2.2rem; font-weight: 700; }
+    div[data-testid="stMetricDelta"] > div { font-size: 1rem; }
+</style>
+""", unsafe_allow_html=True)
+
 SYSTEM_STATE_UUID = "00000000-0000-0000-0000-000000000001"
 
 def get_config(key: str, default: str = "") -> str:
@@ -61,20 +66,20 @@ def get_supabase_client() -> Client:
     try:
         return app.supabase_service.get_backend_service_client()
     except Exception as e:
-        st.warning(f"⚠️ Service role registration failed: {str(e)}")
+        st.warning(f"⚠️ Service role instantiation failed: {str(e)}")
         st.stop()
 
 try:
     supabase = get_supabase_client()
 except Exception as e:
-    st.error(f"Supabase context missing: {str(e)}")
+    st.error(f"Failed to connect to Supabase Service Key Client: {str(e)}")
     st.stop()
 
 auth_supabase = None
 try:
     auth_supabase = app.supabase_service.get_frontend_client()
 except Exception as e:
-    st.error(f"Auth engine missing: {str(e)}")
+    st.error(f"Failed to initialize public Anon Supabase auth client: {str(e)}")
 
 if "user" not in st.session_state:
     st.session_state["user"] = None
@@ -90,7 +95,6 @@ def handle_logout():
     st.session_state["session_token"] = None
     st.rerun()
 
-# Secure Gatekeeper Login Form
 if st.session_state["user"] is None:
     st.markdown("<h1 style='text-align: center; margin-top: 50px;'>🛡️ Imou-Exotel Monitoring Portal</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -104,9 +108,9 @@ if st.session_state["user"] is None:
             
             if submit:
                 if not email or not password:
-                    st.error("Credentials missing.")
+                    st.error("Please provide both email and password credentials.")
                 else:
-                    with st.spinner("Authenticating..."):
+                    with st.spinner("Verifying credentials..."):
                         try:
                             auth_response = auth_supabase.auth.sign_in_with_password({
                                 "email": email,
@@ -117,15 +121,14 @@ if st.session_state["user"] is None:
                                 st.session_state["session_token"] = auth_response.session.access_token
                                 st.rerun()
                             else:
-                                st.error("Invalid login parameters.")
+                                st.error("Authentication failed. Access Denied.")
                         except Exception as e:
-                            st.error(f"Authentication failed: {str(e)}")
+                            st.error(f"Login process failed: {str(e)}")
     st.stop()
 
-# Post-Authentication Dashboard Layout
 st.sidebar.markdown("### 👤 User Information")
 st.sidebar.write(f"Logged in as: **{st.session_state['user'].email}**")
-st.sidebar.button("🔐 Terminate Session", on_click=handle_logout, use_container_width=True)
+st.sidebar.button("🔐 Terminate Session (Sign Out)", on_click=handle_logout, use_container_width=True)
 
 st.sidebar.write("---")
 st.sidebar.markdown("### ⚙️ System Metadata")
@@ -135,7 +138,6 @@ st.sidebar.markdown(f"**Poll Interval:** `{get_config('IMOU_POLL_INTERVAL_SECOND
 st.title("📊 Security & Notification Monitor Dashboard")
 st.write("---")
 
-# Query State using Strict UUID Mapping (Fixes 22P02 Error)
 try:
     state_res = supabase.table("system_state").select("is_paused").eq("id", SYSTEM_STATE_UUID).execute()
     db_paused = state_res.data[0]["is_paused"] if state_res.data else False
@@ -150,7 +152,7 @@ with left_col:
     new_paused = st.toggle("⏸️ Pause / Resume All Activities", value=db_paused, key="master_pause_switch")
     
     if new_paused != db_paused:
-        with st.spinner("Syncing to database..."):
+        with st.spinner("Pushing update to database..."):
             try:
                 supabase.table("system_state").update({"is_paused": new_paused}).eq("id", SYSTEM_STATE_UUID).execute()
                 st.rerun()
@@ -160,12 +162,11 @@ with left_col:
 with right_col:
     st.subheader("📈 System Telemetry Metrics")
     
-    # Query using production-ready column name 'triggered_at' (Fixes 42703 Error)
     try:
         logs_query = supabase.table("camera_logs").select("*").order("triggered_at", desc=True).limit(100).execute()
         logs_data = logs_query.data or []
     except Exception as e:
-        st.error(f"Error loading logs: {str(e)}")
+        st.error(f"Error loading logs telemetry: {str(e)}")
         logs_data = []
 
     total_alerts = len(logs_data)
@@ -173,7 +174,7 @@ with right_col:
     with m_col1:
         st.metric("Monitoring State", "PAUSED" if db_paused else "ACTIVE")
     with m_col2:
-        st.metric("Alert Records (Last 100)", total_alerts)
+        st.metric("Recorded Alert Records (Last 100)", total_alerts)
 
     if logs_data:
         df = pd.DataFrame(logs_data)
@@ -196,10 +197,10 @@ with right_col:
         fig.update_layout(height=260, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No recorded offline alerts found.")
+        st.info("No recorded offline alerts found in Supabase logs.")
 
 st.write("---")
-st.subheader("📋 Telemetry Logs History")
+st.subheader("📋 Telemetry Logs History (Recent 100 Alert Cycles)")
 
 if logs_data:
     df_logs = pd.DataFrame(logs_data)
@@ -216,9 +217,8 @@ if logs_data:
         use_container_width=True, hide_index=True
     )
 else:
-    st.info("No logs stored in database.")
+    st.info("No logs are currently stored in the database.")
 
-# Guarded worker activation at the absolute bottom of execution lifespan
 def start_background_workers() -> bool:
     if st.session_state.get('workers_initialized', False):
         return True
