@@ -22,3 +22,14 @@ CREATE TABLE IF NOT EXISTS camera_logs (
     notification_sent BOOLEAN DEFAULT TRUE
 );
 
+-- Create the system_session table to track active web session heartbeats
+CREATE TABLE IF NOT EXISTS system_session (
+    id VARCHAR(255) PRIMARY KEY,
+    last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Seed initial session row if it does not exist
+INSERT INTO system_session (id, last_active_at)
+VALUES ('00000000-0000-0000-0000-000000000001', NOW())
+ON CONFLICT (id) DO NOTHING;
+

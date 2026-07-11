@@ -64,5 +64,22 @@ class SupabaseDbClient:
                 logger.exception("Error executing log_camera_drop query: %s", str(e))
             return False
 
+    def get_session_heartbeat(self) -> Optional[str]:
+        """
+        Thread-safe query to fetch the 'last_active_at' timestamp from system_session table (id=1).
+        """
+        if not self.client:
+            logger.warning("Supabase client uninitialized. get_session_heartbeat returning None")
+            return None
+
+        with self._lock:
+            try:
+                response = self.client.table("system_session").select("last_active_at").eq("id", "00000000-0000-0000-0000-000000000001").execute()
+                if response.data:
+                    return response.data[0].get("last_active_at")
+            except Exception as e:
+                logger.exception("Error executing get_session_heartbeat query: %s", str(e))
+            return None
+
 # Global database client instance
 db_client = SupabaseDbClient()

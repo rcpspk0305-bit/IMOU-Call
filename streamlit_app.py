@@ -19,6 +19,17 @@ import app.supabase_service
 import app.imou_poller
 import app.telegram_service
 
+def start_background_workers() -> bool:
+    try:
+        app.imou_poller.imou_poller.start()
+        app.telegram_service.telegram_bot_poller.start()
+        return True
+    except Exception:
+        return False
+
+start_background_workers()
+
+
 def format_to_ist_str(val) -> str:
     if pd.isna(val):
         return "Never"
@@ -119,6 +130,16 @@ if st.session_state["user"] is None:
                             if auth_response.user and auth_response.session:
                                 st.session_state["user"] = auth_response.user
                                 st.session_state["session_token"] = auth_response.session.access_token
+                                
+                                # FRONTEND HEARTBEAT: immediately update system_session table
+                                from datetime import datetime, timezone
+                                try:
+                                    supabase.table("system_session").update({
+                                        "last_active_at": datetime.now(timezone.utc).isoformat()
+                                    }).eq("id", SYSTEM_STATE_UUID).execute()
+                                except Exception as db_err:
+                                    st.warning(f"⚠️ Failed to update session heartbeat: {str(db_err)}")
+                                
                                 st.rerun()
                             else:
                                 st.error("Authentication failed. Access Denied.")
@@ -129,6 +150,19 @@ if st.session_state["user"] is None:
 st.sidebar.markdown("### 👤 User Information")
 st.sidebar.write(f"Logged in as: **{st.session_state['user'].email}**")
 st.sidebar.button("🔐 Terminate Session (Sign Out)", on_click=handle_logout, use_container_width=True)
+
+# FRONTEND HEARTBEAT: Periodically refresh active session heartbeat while dashboard is open
+@st.fragment(run_every=15)
+def run_session_heartbeat():
+    from datetime import datetime, timezone
+    try:
+        supabase.table("system_session").update({
+            "last_active_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", SYSTEM_STATE_UUID).execute()
+    except Exception:
+        pass
+
+run_session_heartbeat()
 
 st.sidebar.write("---")
 st.sidebar.markdown("### ⚙️ System Metadata")
@@ -218,16 +252,3 @@ if logs_data:
     )
 else:
     st.info("No logs are currently stored in the database.")
-
-def start_background_workers() -> bool:
-    if st.session_state.get('workers_initialized', False):
-        return True
-    try:
-        app.imou_poller.imou_poller.start()
-        app.telegram_service.telegram_bot_poller.start()
-        st.session_state['workers_initialized'] = True
-        return True
-    except Exception:
-        return False
-
-start_background_workers()

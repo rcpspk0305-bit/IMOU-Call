@@ -4,6 +4,14 @@ from app.config import Config
 from app.lifecycle import app_lifecycle
 from app.telegram_service import TelegramBotPoller, send_telegram_notification
 from app.imou_poller import ImouPoller
+from datetime import datetime, timezone
+
+@pytest.fixture(autouse=True)
+def mock_db_session_heartbeat():
+    now_str = datetime.now(timezone.utc).isoformat()
+    with patch("db_client.SupabaseDbClient.get_session_heartbeat", return_value=now_str):
+        yield
+
 
 class MockTelegramConfig:
     TELEGRAM_BOT_TOKEN = "mock_bot_token_123"

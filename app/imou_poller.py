@@ -43,6 +43,32 @@ class ImouPoller:
         import datetime
         self.last_alarm_check_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+    def is_session_active(self) -> bool:
+        """
+        Checks if 'last_active_at' from 'system_session' is less than 30 seconds old.
+        """
+        from db_client import db_client
+        try:
+            last_active_str = db_client.get_session_heartbeat()
+            if not last_active_str:
+                logger.warning("No session heartbeat found in database.")
+                return False
+            
+            from datetime import datetime, timezone
+            clean_str = last_active_str.replace("Z", "+00:00")
+            last_active = datetime.fromisoformat(clean_str)
+            if last_active.tzinfo is None:
+                last_active = last_active.replace(tzinfo=timezone.utc)
+            
+            now = datetime.now(timezone.utc)
+            elapsed = (now - last_active).total_seconds()
+            
+            logger.info("Session heartbeat elapsed time: %.1f seconds", elapsed)
+            return elapsed < 30.0
+        except Exception as e:
+            logger.exception("Error checking system session heartbeat: %s", str(e))
+            return False
+
     def poll_once(self, ignore_pause: bool = False) -> dict:
         return self.run_polling_cycle(ignore_pause=ignore_pause)
 
@@ -62,6 +88,11 @@ class ImouPoller:
         if app_lifecycle.is_paused and not ignore_pause:
             logger.info("Monitoring is currently paused. Skipping cycle.")
             return {"status": "skipped", "reason": "monitoring_paused"}
+
+        # Check session heartbeat
+        if not self.is_session_active():
+            logger.info("Imou poller run_polling_cycle skipped: no active authenticated web session heartbeat.")
+            return {"status": "skipped", "reason": "inactive_session"}
 
         if not self.device_id or self.device_id == "YOUR_IMOU_DEVICE_ID":
             logger.warning("Imou poller skipped: IMOU_DEVICE_ID is not configured.")

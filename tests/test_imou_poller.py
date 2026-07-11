@@ -1,5 +1,14 @@
 from unittest.mock import MagicMock, patch
 from app.imou_poller import ImouPoller
+import pytest
+from datetime import datetime, timezone
+
+@pytest.fixture(autouse=True)
+def mock_db_session_heartbeat():
+    now_str = datetime.now(timezone.utc).isoformat()
+    with patch("db_client.SupabaseDbClient.get_session_heartbeat", return_value=now_str):
+        yield
+
 
 def test_poller_device_online():
     mock_service = MagicMock()
@@ -168,5 +177,31 @@ def test_check_human_alarms_dispatch(mock_get, mock_post):
     
     # Verify both requests.post were called (one for getAlarmMessageList, one for sendPhoto)
     assert mock_post.call_count == 2
+
+def test_is_session_active_valid(mock_db_session_heartbeat):
+    poller = ImouPoller(device_id="CAM_TEST")
+    assert poller.is_session_active() is True
+
+def test_is_session_active_invalid():
+    from datetime import datetime, timezone, timedelta
+    old_time = (datetime.now(timezone.utc) - timedelta(seconds=45)).isoformat()
+    with patch("db_client.SupabaseDbClient.get_session_heartbeat", return_value=old_time):
+        poller = ImouPoller(device_id="CAM_TEST")
+        assert poller.is_session_active() is False
+
+def test_is_session_active_missing():
+    with patch("db_client.SupabaseDbClient.get_session_heartbeat", return_value=None):
+        poller = ImouPoller(device_id="CAM_TEST")
+        assert poller.is_session_active() is False
+
+def test_polling_cycle_skips_when_session_inactive():
+    with patch("db_client.SupabaseDbClient.get_session_heartbeat", return_value=None):
+        mock_service = MagicMock()
+        poller = ImouPoller(service=mock_service, device_id="CAM_TEST")
+        res = poller.poll_once()
+        assert res["status"] == "skipped"
+        assert res["reason"] == "inactive_session"
+        mock_service.get_access_token.assert_not_called()
+
 
 

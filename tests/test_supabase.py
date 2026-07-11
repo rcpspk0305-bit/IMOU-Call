@@ -86,3 +86,26 @@ def test_fetch_recent_logs_success(mock_supabase):
     mock_order.order.assert_called_with("triggered_at", desc=True)
     mock_limit.limit.assert_called_with(5)
 
+def test_get_session_heartbeat_success(mock_supabase):
+    mock_select = MagicMock()
+    mock_eq = MagicMock()
+    mock_execute = MagicMock()
+    
+    mock_supabase.table.return_value = mock_select
+    mock_select.select.return_value = mock_eq
+    mock_eq.eq.return_value = mock_execute
+    mock_execute.execute.return_value = MagicMock(data=[{"last_active_at": "2026-07-05T12:00:00+00:00"}])
+    
+    from db_client import db_client
+    old_client = db_client.client
+    db_client.client = mock_supabase
+    try:
+        hb = db_client.get_session_heartbeat()
+        assert hb == "2026-07-05T12:00:00+00:00"
+        mock_supabase.table.assert_called_with("system_session")
+        mock_select.select.assert_called_with("last_active_at")
+        mock_eq.eq.assert_called_with("id", "00000000-0000-0000-0000-000000000001")
+    finally:
+        db_client.client = old_client
+
+
