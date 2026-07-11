@@ -42,6 +42,11 @@ class ImouPoller:
         self.last_processed_alarm_id = None
         import datetime
         self.last_alarm_check_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        
+        # Aerator state tracking parameters
+        self.aerator_state = "WORKING"
+        self.aerator_alerts_sent = 0
+        self.last_aerator_alert_time = 0.0
 
     def is_session_active(self) -> bool:
         """
@@ -103,6 +108,34 @@ class ImouPoller:
             self.check_for_human_alarms()
         except Exception as e:
             logger.exception("Error checking for human alarms: %s", str(e))
+
+        # Night-time aerator computer vision check
+        from app.aerator_analyzer import is_night_time
+        if is_night_time():
+            try:
+                mean_mag, current_state, snapshot_bytes = self.capture_and_analyze_aerator()
+                if current_state == "STOPPED":
+                    if self.aerator_state == "WORKING":
+                        logger.warning("Aerator stopped! Triggering ROUND 1 escalation alerts.")
+                        self.aerator_state = "STOPPED"
+                        self.aerator_alerts_sent = 1
+                        self.last_aerator_alert_time = time.time()
+                        self.dispatch_aerator_alert(round_num=1, snapshot_bytes=snapshot_bytes)
+                    elif self.aerator_state == "STOPPED" and self.aerator_alerts_sent == 1:
+                        elapsed = time.time() - self.last_aerator_alert_time
+                        if elapsed >= 180.0:
+                            logger.warning("Aerator remains frozen after %.1f seconds. Triggering ROUND 2 escalation.", elapsed)
+                            self.aerator_alerts_sent = 2
+                            self.dispatch_aerator_alert(round_num=2, snapshot_bytes=snapshot_bytes)
+                elif current_state == "WORKING":
+                    if self.aerator_state == "STOPPED":
+                        logger.warning("Aerator resumed spinning! Triggering recovery alert and resetting states.")
+                        self.aerator_state = "WORKING"
+                        self.aerator_alerts_sent = 0
+                        self.last_aerator_alert_time = 0.0
+                        self.dispatch_aerator_recovery()
+            except Exception as aerator_err:
+                logger.exception("Error during night-time aerator check: %s", str(aerator_err))
 
         logger.info("Starting active Imou status poll cycle for device '%s'", self.device_id)
 
@@ -327,7 +360,7 @@ class ImouPoller:
                         img_resp = requests.get(pic_url, timeout=15)
                         if img_resp.status_code == 200:
                             bio = io.BytesIO(img_resp.content)
-                            bio.name = 'alarm_trigger.jpg'
+                            bio.name = 'alarm.jpg'
                             
                             chat_id = getattr(self.config, "TELEGRAM_ALLOWED_CHAT_ID", None)
                             caption = f"⚠️ *Security Alert: Human Detected!*\nDevice: `{self.device_id}`\nTime: `{timestamp}`"
@@ -345,6 +378,102 @@ class ImouPoller:
     def check_human_alarms(self) -> Optional[str]:
         """Backward compatibility wrapper for check_for_human_alarms."""
         return self.check_for_human_alarms()
+
+    def capture_and_analyze_aerator(self) -> Tuple[Optional[float], str, Optional[bytes]]:
+        """
+        Captures a pair of snapshots spaced 1 second apart and calculates optical flow.
+        """
+        token, err = self.imou_service.get_access_token()
+        if err or not token:
+            logger.error("Aerator check failed: Could not retrieve Imou access token: %s", err)
+            return None, "UNKNOWN", None
+
+        # Capture first frame snap
+        snap1_url, err1 = self.imou_service.set_device_snap_enhanced(self.device_id, access_token=token)
+        if err1 or not snap1_url:
+            logger.error("Aerator check failed: First snapshot error: %s", err1)
+            return None, "UNKNOWN", None
+
+        time.sleep(1.0)
+
+        # Capture second frame snap
+        snap2_url, err2 = self.imou_service.set_device_snap_enhanced(self.device_id, access_token=token)
+        if err2 or not snap2_url:
+            logger.error("Aerator check failed: Second snapshot error: %s", err2)
+            return None, "UNKNOWN", None
+
+        import requests
+        try:
+            resp1 = requests.get(snap1_url, timeout=15)
+            resp2 = requests.get(snap2_url, timeout=15)
+            if resp1.status_code != 200 or resp2.status_code != 200:
+                logger.error("Aerator check failed: Download error: frame1 HTTP %d, frame2 HTTP %d", resp1.status_code, resp2.status_code)
+                return None, "UNKNOWN", None
+
+            from app.aerator_analyzer import analyze_motion
+            roi_str = getattr(self.config, "AERATOR_ROI", None)
+            roi = tuple(map(int, roi_str.split(","))) if roi_str else None
+            threshold = float(getattr(self.config, "AERATOR_MOTION_THRESHOLD", 1.5))
+
+            from typing import Tuple, Optional
+            mean_mag, state = analyze_motion(resp1.content, resp2.content, roi=roi, threshold=threshold)
+            return mean_mag, state, resp2.content
+        except Exception as e:
+            logger.exception("Aerator check failed: Exception in capture_and_analyze: %s", str(e))
+            return None, "UNKNOWN", None
+
+    def dispatch_aerator_alert(self, round_num: int, snapshot_bytes: Optional[bytes]):
+        """
+        Sends Telegram critical alert with snapshot frame and triggers Exotel voice call.
+        """
+        from app.telegram_service import telegram_bot_poller
+        chat_id = getattr(self.config, "TELEGRAM_ALLOWED_CHAT_ID", None)
+        
+        # 1. Dispatch Telegram Alert with Frame
+        if chat_id and snapshot_bytes:
+            import io
+            bio = io.BytesIO(snapshot_bytes)
+            bio.name = "aerator_alert.jpg"
+            caption = f"🚨 <b>CRITICAL WARNING: Aerator STOPPED! (Escalation Round {round_num})</b>"
+            try:
+                telegram_bot_poller.bot.send_photo(chat_id, bio, caption=caption, parse_mode="HTML")
+                logger.info("Aerator STOPPED Telegram warning sent for round %d.", round_num)
+            except Exception as tg_err:
+                logger.error("Failed to send Telegram aerator alert: %s", str(tg_err))
+        elif chat_id:
+            from app.telegram_service import send_telegram_notification
+            send_telegram_notification(f"🚨 <b>CRITICAL WARNING: Aerator STOPPED! (Escalation Round {round_num}) [No Frame Captured]</b>", chat_id=chat_id, config=self.config)
+
+        # 2. Trigger Exotel Outbound Voice Call
+        try:
+            self.call_handler(self.device_id)
+            logger.info("Exotel voice alert triggered for aerator stop round %d.", round_num)
+        except Exception as call_err:
+            logger.error("Failed to trigger Exotel call for aerator: %s", str(call_err))
+
+    def dispatch_aerator_recovery(self):
+        """
+        Sends Telegram recovery notification and 1 confirmation Exotel voice call.
+        """
+        from app.telegram_service import telegram_bot_poller
+        chat_id = getattr(self.config, "TELEGRAM_ALLOWED_CHAT_ID", None)
+        
+        # 1. Telegram recovery text
+        if chat_id:
+            caption = "✅ <b>Aerator Recovery Alert: Wheel has resumed spinning.</b>"
+            try:
+                telegram_bot_poller.bot.send_message(chat_id, caption, parse_mode="HTML")
+                logger.info("Aerator recovery Telegram notification sent.")
+            except Exception as tg_err:
+                logger.error("Failed to send Telegram aerator recovery message: %s", str(tg_err))
+
+        # 2. Exotel confirmation call
+        try:
+            self.call_handler(self.device_id)
+            logger.info("Exotel confirmation recovery call triggered for aerator.")
+        except Exception as call_err:
+            logger.error("Failed to trigger Exotel recovery call for aerator: %s", str(call_err))
+
 
     def _run_loop(self):
         logger.info("Imou active polling thread started. Interval: %d seconds", self.poll_interval_seconds)

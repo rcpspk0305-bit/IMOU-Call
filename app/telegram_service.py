@@ -251,9 +251,11 @@ class TelegramBotPoller:
                 return
 
         # Extract base command string to support group chat syntax suffixes (e.g. /status@MyCamExotelBot)
-        first_word = text.strip().split()[0] if text.strip().split() else ""
-        base_command = first_word.split("@")[0].lower()
-        logger.info("Processing authorized Telegram command '%s' (base: '%s') from chat_id '%s'", first_word, base_command, chat_id_str)
+        raw_text = text.strip()
+        if not raw_text:
+            return
+        base_command = raw_text.split()[0].split('@')[0].lower()
+        logger.info("Processing authorized Telegram command '%s' (base: '%s') from chat_id '%s'", raw_text.split()[0], base_command, chat_id_str)
 
         if base_command == "/pause":
             app_lifecycle.is_paused = True
