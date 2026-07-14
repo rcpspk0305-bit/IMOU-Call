@@ -262,3 +262,32 @@ def test_telegram_multi_id_verification(mock_send, mock_get_paused, mock_set_pau
     poller.process_command("/pause", sender_chat_id="777777777", from_user_id="888888888")
     assert app_lifecycle.is_paused is False  # remains unchanged
     mock_send.assert_called_with("⚠️ <b>Access Denied:</b> Unauthorized chat ID.", chat_id="777777777", config=MultiIdConfig)
+
+
+@patch("app.supabase_service.get_backend_service_client")
+@patch("app.imou_poller.imou_poller.poll_once")
+@patch("app.telegram_service.send_telegram_notification")
+def test_telegram_checknow_command_success(mock_send, mock_poll, mock_get_backend_client):
+    mock_poll.return_value = {"status": "success", "device_id": "CAM_TEST_TELEGRAM", "is_online": True}
+    
+    mock_client = MagicMock()
+    mock_get_backend_client.return_value = mock_client
+    
+    poller = TelegramBotPoller(config=MockTelegramConfig)
+    poller.process_command("/checknow", sender_chat_id="999888777")
+    
+    # Assertions
+    mock_poll.assert_called_once_with(ignore_pause=True, ignore_session=True)
+    mock_get_backend_client.assert_called_once()
+    mock_client.table.assert_called_once_with("camera_logs")
+    mock_client.table("camera_logs").insert.assert_called_once()
+    
+    assert mock_send.call_count == 2
+    # Verify the first message (checking...)
+    assert "Executing instant Imou API camera check" in mock_send.call_args_list[0][0][0]
+    # Verify the second message (clean success string + IST timestamp)
+    success_msg = mock_send.call_args_list[1][0][0]
+    assert "Instant Check Successful" in success_msg
+    assert "ONLINE" in success_msg
+    assert "IST" in success_msg
+

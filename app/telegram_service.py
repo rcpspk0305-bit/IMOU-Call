@@ -327,7 +327,7 @@ class TelegramBotPoller:
             
             device_id = getattr(self.config, "IMOU_DEVICE_ID", Config.IMOU_DEVICE_ID)
             send_telegram_notification("🔍 <b>Executing instant Imou API camera check...</b>", chat_id=sender_chat_id, config=self.config)
-            res = imou_poller.poll_once(ignore_pause=True)
+            res = imou_poller.poll_once(ignore_pause=True, ignore_session=True)
             
             if res.get("status") == "success":
                 is_online = res.get("is_online", True)
@@ -347,7 +347,13 @@ class TelegramBotPoller:
                 except Exception as log_err:
                     logger.error("Failed to write checknow status to database logs: %s", str(log_err))
                 
-                reply = f"<b>Instant Check Result:</b> Device <code>{res.get('device_id')}</code> is {state_emoji}."
+                now_ist = format_to_ist(time.time())
+                reply = (
+                    "<b>✅ Instant Check Successful</b>\n"
+                    f"• <b>Device ID:</b> <code>{res.get('device_id')}</code>\n"
+                    f"• <b>Status:</b> {state_emoji}\n"
+                    f"• <b>Timestamp:</b> <code>{now_ist}</code>"
+                )
             else:
                 reply = f"❌ <b>Instant Check Failed:</b> {res.get('error') or res.get('reason')}"
             

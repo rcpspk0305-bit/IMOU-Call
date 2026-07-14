@@ -124,12 +124,18 @@ class ImouService:
             logger.exception(err_msg)
             return None, err_msg
 
-    def get_device_online_status(self, device_id: str, access_token: Optional[str] = None) -> Tuple[Optional[bool], Optional[str]]:
+    def get_device_online_status(
+        self, 
+        device_id: str, 
+        access_token: Optional[str] = None, 
+        retry_on_invalid: bool = True
+    ) -> Tuple[Optional[bool], Optional[str]]:
         """
         Queries the device online status via Imou API (deviceOnline or listDeviceOnline endpoint).
 
         :param device_id: The Imou camera Device ID / Serial Number.
         :param access_token: Optional token, fetched automatically if not provided.
+        :param retry_on_invalid: If True, automatically clears token cache and retries once on token failure.
         :return: Tuple of (is_online: bool | None, error_message: str | None)
                  is_online is True if camera is online, False if offline, None if request failed.
         """
@@ -165,13 +171,51 @@ class ImouService:
             def op():
                 return requests.post(url, json=payload, timeout=10)
             response = _execute_with_retry(op)
+            
+            # Retrieve JSON structure to check for interceptable errors
+            data = {}
+            try:
+                data = response.json()
+            except Exception:
+                pass
+
+            result = data.get("result") or {}
+            err_code = str(result.get("code") or data.get("code") or "").strip()
+            err_msg = str(result.get("msg") or data.get("desc") or data.get("msg") or "").strip()
+            
+            is_invalid = (
+                err_code == "INVALID_TOKEN" or
+                "inactive_session" in err_msg.lower() or
+                "inactive_session" in response.text.lower() or
+                "invalid_token" in err_msg.lower() or
+                "invalid_token" in response.text.lower() or
+                err_code == "10001"
+            )
+
+            if is_invalid and retry_on_invalid:
+                logger.warning(
+                    "Imou session inactive/expired ('inactive_session' / 'INVALID_TOKEN' / code: %s). "
+                    "Clearing cached token and invoking root token acquisition to retry...",
+                    err_code
+                )
+                self._cached_token = None
+                self._token_expires_at = 0
+                
+                # Force-generate a brand-new accessToken using root appId and appSecret
+                new_token, token_err = self.get_access_token(force_refresh=True)
+                if token_err or not new_token:
+                    logger.error("Auto-refresh retry failed because new token could not be obtained: %s", token_err)
+                    return None, f"Token auto-refresh failed: {token_err}"
+                
+                # Automatically re-try the status check execution immediately with the new token
+                logger.info("Retrying Imou device online status with refreshed token.")
+                return self.get_device_online_status(device_id, access_token=new_token, retry_on_invalid=False)
+
             if response.status_code != 200:
                 err_msg = f"HTTP Error {response.status_code}: {response.text}"
                 logger.error("Failed to query device online status: %s", err_msg)
                 return None, err_msg
 
-            data = response.json()
-            result = data.get("result", {})
             result_data = result.get("data", {})
 
             # Check online status in response (can be onLine, status, channels, etc.)
@@ -201,6 +245,18 @@ class ImouService:
             err_msg = f"Exception while querying device online status: {str(e)}"
             logger.exception(err_msg)
             return None, err_msg
+
+    def check_camera_online_status(
+        self, 
+        device_id: str, 
+        access_token: Optional[str] = None, 
+        retry_on_invalid: bool = True
+    ) -> Tuple[Optional[bool], Optional[str]]:
+        """
+        Wrapper/Alias for checking device online status.
+        Wrap the API request in a try-except block or a status-code checker.
+        """
+        return self.get_device_online_status(device_id, access_token=access_token, retry_on_invalid=retry_on_invalid)
 
     def set_device_snap_enhanced(self, device_id: str, channel_id: str = "0", access_token: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         """

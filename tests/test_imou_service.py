@@ -71,3 +71,53 @@ def test_get_device_online_status_offline(mock_post):
 
     assert err is None
     assert is_online is False
+
+@patch("requests.post")
+def test_get_device_online_status_retry_on_invalid_token(mock_post):
+    # Setup mock responses: first returns INVALID_TOKEN, second (token request) returns success token, third (retry) returns status online
+    mock_resp_invalid = MagicMock()
+    mock_resp_invalid.status_code = 200
+    mock_resp_invalid.json.return_value = {
+        "result": {
+            "code": "INVALID_TOKEN",
+            "msg": "invalid access token"
+        }
+    }
+
+    mock_resp_token = MagicMock()
+    mock_resp_token.status_code = 200
+    mock_resp_token.json.return_value = {
+        "result": {
+            "code": "0",
+            "data": {
+                "accessToken": "fresh_new_token",
+                "expireTime": 3600
+            }
+        }
+    }
+
+    mock_resp_online = MagicMock()
+    mock_resp_online.status_code = 200
+    mock_resp_online.json.return_value = {
+        "result": {
+            "code": "0",
+            "data": {
+                "onLine": "1"
+            }
+        }
+    }
+
+    mock_post.side_effect = [mock_resp_invalid, mock_resp_token, mock_resp_online]
+
+    service = ImouService(config=MockImouConfig)
+    # Put a token in cached token to ensure it gets cleared
+    service._cached_token = "old_token"
+    service._token_expires_at = 9999999999.0
+
+    is_online, err = service.get_device_online_status("CAM_123")
+
+    assert err is None
+    assert is_online is True
+    assert service._cached_token == "fresh_new_token"
+    assert mock_post.call_count == 3
+

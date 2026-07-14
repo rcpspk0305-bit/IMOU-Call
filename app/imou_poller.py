@@ -74,10 +74,10 @@ class ImouPoller:
             logger.exception("Error checking system session heartbeat: %s", str(e))
             return False
 
-    def poll_once(self, ignore_pause: bool = False) -> dict:
-        return self.run_polling_cycle(ignore_pause=ignore_pause)
+    def poll_once(self, ignore_pause: bool = False, ignore_session: bool = False) -> dict:
+        return self.run_polling_cycle(ignore_pause=ignore_pause, ignore_session=ignore_session)
 
-    def run_polling_cycle(self, ignore_pause: bool = False) -> dict:
+    def run_polling_cycle(self, ignore_pause: bool = False, ignore_session: bool = False) -> dict:
         """
         Executes a single polling cycle:
         1. Verify lifecycle and pause state.
@@ -95,7 +95,7 @@ class ImouPoller:
             return {"status": "skipped", "reason": "monitoring_paused"}
 
         # Check session heartbeat
-        if not self.is_session_active():
+        if not ignore_session and not self.is_session_active():
             logger.info("Imou poller run_polling_cycle skipped: no active authenticated web session heartbeat.")
             return {"status": "skipped", "reason": "inactive_session"}
 
