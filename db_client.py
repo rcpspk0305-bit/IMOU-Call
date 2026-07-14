@@ -66,19 +66,26 @@ class SupabaseDbClient:
 
     def get_session_heartbeat(self) -> Optional[str]:
         """
-        Thread-safe query to fetch the 'last_active_at' timestamp from system_session table (id=1).
+        Thread-safe query to fetch the 'last_active_at' timestamp from system_state table (id=1).
         """
         if not self.client:
             logger.warning("Supabase client uninitialized. get_session_heartbeat returning None")
             return None
 
+        from postgrest.exceptions import APIError
+
         with self._lock:
             try:
-                response = self.client.table("system_session").select("last_active_at").eq("id", "00000000-0000-0000-0000-000000000001").execute()
+                response = self.client.table("system_state").select("*").eq("id", "00000000-0000-0000-0000-000000000001").execute()
                 if response.data:
-                    return response.data[0].get("last_active_at")
+                    row = response.data[0]
+                    return row.get("last_active_at") or row.get("updated_at") or row.get("triggered_at")
+            except APIError as api_err:
+                logger.error("Postgrest APIError executing get_session_heartbeat query: %s", str(api_err))
+                return None
             except Exception as e:
                 logger.exception("Error executing get_session_heartbeat query: %s", str(e))
+                return None
             return None
 
 # Global database client instance
