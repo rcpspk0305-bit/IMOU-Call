@@ -1,12 +1,20 @@
 name: Streamlit 24-7 Keep Awake Daemon
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 jobs:
   ping_app:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Ping Streamlit Deployment Engine
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create empty heartbeat commit and push
         run: |
-          curl -I -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" https://imou-call-raavigunta.streamlit.app/
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "infra: 24/7 autonomous keep-awake heartbeat"
+          git push origin main

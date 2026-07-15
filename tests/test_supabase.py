@@ -94,6 +94,8 @@ def test_get_session_heartbeat_success(mock_supabase):
     mock_supabase.table.return_value = mock_select
     mock_select.select.return_value = mock_eq
     mock_eq.eq.return_value = mock_execute
+    
+    # Test case 1: returns last_active_at
     mock_execute.execute.return_value = MagicMock(data=[{"last_active_at": "2026-07-05T12:00:00+00:00"}])
     
     from db_client import db_client
@@ -102,9 +104,40 @@ def test_get_session_heartbeat_success(mock_supabase):
     try:
         hb = db_client.get_session_heartbeat()
         assert hb == "2026-07-05T12:00:00+00:00"
-        mock_supabase.table.assert_called_with("system_session")
-        mock_select.select.assert_called_with("last_active_at")
+        mock_supabase.table.assert_called_with("system_state")
+        mock_select.select.assert_called_with("*")
         mock_eq.eq.assert_called_with("id", "00000000-0000-0000-0000-000000000001")
+        
+        # Test case 2: dynamic fallback to updated_at
+        mock_execute.execute.return_value = MagicMock(data=[{"updated_at": "2026-07-05T13:00:00+00:00"}])
+        hb_fallback = db_client.get_session_heartbeat()
+        assert hb_fallback == "2026-07-05T13:00:00+00:00"
+        
+        # Test case 3: dynamic fallback to triggered_at
+        mock_execute.execute.return_value = MagicMock(data=[{"triggered_at": "2026-07-05T14:00:00+00:00"}])
+        hb_triggered = db_client.get_session_heartbeat()
+        assert hb_triggered == "2026-07-05T14:00:00+00:00"
+    finally:
+        db_client.client = old_client
+
+
+def test_get_session_heartbeat_apierror(mock_supabase):
+    mock_select = MagicMock()
+    mock_eq = MagicMock()
+    
+    mock_supabase.table.return_value = mock_select
+    mock_select.select.return_value = mock_eq
+    
+    from postgrest.exceptions import APIError
+    # Simulate APIError on eq() or execute()
+    mock_eq.eq.side_effect = APIError({"message": "Cache lookup failure", "code": "PGRST101"})
+    
+    from db_client import db_client
+    old_client = db_client.client
+    db_client.client = mock_supabase
+    try:
+        hb = db_client.get_session_heartbeat()
+        assert hb is None
     finally:
         db_client.client = old_client
 

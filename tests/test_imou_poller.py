@@ -50,7 +50,9 @@ def test_poller_device_offline_triggers_exotel_call():
     assert res["call_triggered"] is True
     mock_call_handler.assert_called_once_with("CAM_OFFLINE_002")
 
-def test_escalated_alerting_lifecycle():
+@patch("app.aerator_analyzer.is_night_time", return_value=False)
+@patch("app.imou_poller.ImouPoller.check_for_human_alarms", return_value=None)
+def test_escalated_alerting_lifecycle(mock_check_alarms, mock_night_time):
     mock_service = MagicMock()
     mock_service.get_access_token.return_value = ("mock_token", None)
     
