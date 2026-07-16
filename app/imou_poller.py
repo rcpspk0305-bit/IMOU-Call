@@ -50,7 +50,7 @@ class ImouPoller:
 
     def is_session_active(self) -> bool:
         """
-        Checks if 'last_active_at' from 'system_session' is less than 30 seconds old.
+        Checks if 'last_active_at' (or 'updated_at') from 'system_state' is less than 30 seconds old.
         """
         from db_client import db_client
         try:

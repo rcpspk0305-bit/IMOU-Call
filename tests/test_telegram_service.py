@@ -291,3 +291,95 @@ def test_telegram_checknow_command_success(mock_send, mock_poll, mock_get_backen
     assert "ONLINE" in success_msg
     assert "IST" in success_msg
 
+
+@patch("requests.post")
+@patch("requests.get")
+def test_send_telegram_photo_url_download(mock_get, mock_post):
+    from app.telegram_service import send_telegram_photo
+    import io
+
+    # Mock requests.get for image download
+    mock_get_response = MagicMock()
+    mock_get_response.status_code = 200
+    mock_get_response.content = b"fake_downloaded_image_bytes"
+    mock_get.return_value = mock_get_response
+
+    # Mock requests.post for Telegram upload
+    mock_post_response = MagicMock()
+    mock_post_response.status_code = 200
+    mock_post.return_value = mock_post_response
+
+    class LocalTestConfig:
+        TELEGRAM_BOT_TOKEN = "test_bot_token"
+        TELEGRAM_ALLOWED_CHAT_ID = "12345"
+
+    photo_url = "https://example.com/some_alarm_image.jpg"
+    res = send_telegram_photo(photo_url, "Test Caption", config=LocalTestConfig)
+
+    assert res is True
+    # Verify image was downloaded
+    mock_get.assert_called_once_with(photo_url, timeout=15)
+    # Verify image was uploaded as multipart
+    mock_post.assert_called_once()
+    args, kwargs = mock_post.call_args
+    assert "https://api.telegram.org/bottest_bot_token/sendPhoto" in args[0]
+    
+    files = kwargs.get("files")
+    assert files is not None
+    photo_file = files.get("photo")
+    assert photo_file is not None
+    assert photo_file[0] == "image.jpg"  # assigned file name
+    assert photo_file[1].read() == b"fake_downloaded_image_bytes"
+    assert photo_file[2] == "image/jpeg"
+
+    data = kwargs.get("data")
+    assert data is not None
+    assert data["chat_id"] == "12345"
+    assert data["caption"] == "Test Caption"
+    assert data["parse_mode"] == "Markdown"
+
+
+@patch("app.telegram_service.send_telegram_photo")
+@patch("requests.get")
+def test_telegram_bot_proxy_send_photo_url_download(mock_get, mock_send_photo):
+    from app.telegram_service import TelegramBotPoller
+    import io
+
+    # Mock requests.get for image download
+    mock_get_response = MagicMock()
+    mock_get_response.status_code = 200
+    mock_get_response.content = b"proxy_fake_image_bytes"
+    mock_get.return_value = mock_get_response
+
+    mock_send_photo.return_value = True
+
+    class ProxyTestConfig:
+        TELEGRAM_BOT_TOKEN = "proxy_token"
+        TELEGRAM_ALLOWED_CHAT_ID = "67890"
+
+    poller = TelegramBotPoller(config=ProxyTestConfig)
+    photo_url = "https://example.com/proxy_image.jpg"
+    
+    # Call bot.send_photo
+    res = poller.bot.send_photo("67890", photo_url, "Proxy Caption", parse_mode="HTML")
+
+    assert res is True
+    # Verify image was downloaded
+    mock_get.assert_called_once_with(photo_url, timeout=20)
+    # Verify send_telegram_photo was called with BytesIO object
+    mock_send_photo.assert_called_once()
+    args, kwargs = mock_send_photo.call_args
+    
+    # First arg is photo (BytesIO)
+    photo_arg = args[0]
+    assert hasattr(photo_arg, "read")
+    assert photo_arg.read() == b"proxy_fake_image_bytes"
+    assert getattr(photo_arg, "name") == "image.jpg"
+    
+    # Second arg is caption
+    assert args[1] == "Proxy Caption"
+    # Keyword arguments
+    assert kwargs["chat_id"] == "67890"
+    assert kwargs["parse_mode"] == "HTML"
+
+

@@ -23,7 +23,7 @@ class SupabaseDbClient:
         except Exception as e:
             logger.warning("Supabase credentials not configured for db_client: %s. Using fallback mode.", str(e))
 
-    def get_system_paused(self, fallback: bool = False) -> bool:
+    def get_system_paused(self, fallback: bool = False) -> Optional[bool]:
         """
         Thread-safe query to fetch the 'is_paused' boolean from system_state table (id=1).
         """
@@ -31,22 +31,30 @@ class SupabaseDbClient:
             logger.warning("Supabase client uninitialized. get_system_paused returning fallback: %s", fallback)
             return fallback
 
+        from postgrest.exceptions import APIError
+
         with self._lock:
             try:
                 response = self.client.table("system_state").select("is_paused").eq("id", "00000000-0000-0000-0000-000000000001").execute()
                 if response.data:
-                    return bool(response.data[0]["is_paused"])
+                    row = response.data[0]
+                    return bool(row.get("is_paused", fallback))
+            except APIError as api_err:
+                logger.error("Postgrest APIError executing get_system_paused query: %s", str(api_err))
+                return None
             except Exception as e:
                 logger.exception("Error executing get_system_paused query: %s", str(e))
             return fallback
 
-    def log_camera_drop(self, device_id: str, message: str) -> bool:
+    def log_camera_drop(self, device_id: str, message: str) -> Optional[bool]:
         """
         Thread-safe insertion of a new log row into the camera_logs table when a camera drops.
         """
         if not self.client:
             logger.error("Supabase client uninitialized. log_camera_drop aborted.")
             return False
+
+        from postgrest.exceptions import APIError
 
         with self._lock:
             try:
@@ -60,6 +68,9 @@ class SupabaseDbClient:
                 if response.data:
                     logger.info("Successfully recorded camera drop in camera_logs table.")
                     return True
+            except APIError as api_err:
+                logger.error("Postgrest APIError executing log_camera_drop query: %s", str(api_err))
+                return None
             except Exception as e:
                 logger.exception("Error executing log_camera_drop query: %s", str(e))
             return False

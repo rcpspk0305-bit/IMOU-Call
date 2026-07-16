@@ -131,11 +131,11 @@ if st.session_state["user"] is None:
                                 st.session_state["user"] = auth_response.user
                                 st.session_state["session_token"] = auth_response.session.access_token
                                 
-                                # FRONTEND HEARTBEAT: immediately update system_session table
+                                # FRONTEND HEARTBEAT: immediately update system_state table
                                 from datetime import datetime, timezone
                                 try:
-                                    supabase.table("system_session").update({
-                                        "last_active_at": datetime.now(timezone.utc).isoformat()
+                                    supabase.table("system_state").update({
+                                        "updated_at": datetime.now(timezone.utc).isoformat()
                                     }).eq("id", SYSTEM_STATE_UUID).execute()
                                 except Exception as db_err:
                                     st.warning(f"⚠️ Failed to update session heartbeat: {str(db_err)}")
@@ -156,8 +156,8 @@ st.sidebar.button("🔐 Terminate Session (Sign Out)", on_click=handle_logout, u
 def run_session_heartbeat():
     from datetime import datetime, timezone
     try:
-        supabase.table("system_session").update({
-            "last_active_at": datetime.now(timezone.utc).isoformat()
+        supabase.table("system_state").update({
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", SYSTEM_STATE_UUID).execute()
     except Exception:
         pass
@@ -229,7 +229,7 @@ with right_col:
 
         fig = px.bar(alert_counts, x="date", y="Alerts Count", template="plotly_dark", color_discrete_sequence=["#EF4444"])
         fig.update_layout(height=260, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No recorded offline alerts found in Supabase logs.")
 

@@ -43,7 +43,7 @@ def format_to_ist(dt_val) -> str:
         logger.warning("Error localizing timestamp '%s' to IST: %s", str(dt_val), str(e))
         return str(dt_val)
 
-def send_telegram_photo(photo, caption: str, chat_id: Optional[str] = None, config: type = Config) -> bool:
+def send_telegram_photo(photo, caption: str, chat_id: Optional[str] = None, config: type = Config, parse_mode: str = "Markdown") -> bool:
     """
     Sends a photo alert via Telegram Bot API. Accepts either a URL string or an in-memory byte stream.
     """
@@ -58,15 +58,23 @@ def send_telegram_photo(photo, caption: str, chat_id: Optional[str] = None, conf
     
     try:
         import io
+        if isinstance(photo, str) and (photo.startswith("http://") or photo.startswith("https://")):
+            logger.info("Downloading image from URL for Telegram dispatch to avoid hotlinking: %s", photo)
+            img_content = requests.get(photo, timeout=15).content
+            photo = io.BytesIO(img_content)
+            photo.name = "image.jpg"
+
         if hasattr(photo, "read") or isinstance(photo, (io.BytesIO, io.BufferedReader)):
             if hasattr(photo, "seek"):
                 photo.seek(0)
-            file_name = getattr(photo, "name", "photo.jpg")
+            file_name = getattr(photo, "name", "image.jpg")
+            if not file_name:
+                file_name = "image.jpg"
             files = {"photo": (file_name, photo, "image/jpeg")}
             data = {
                 "chat_id": target_chat_id,
                 "caption": caption,
-                "parse_mode": "Markdown"
+                "parse_mode": parse_mode
             }
             response = requests.post(url, data=data, files=files, timeout=20)
         else:
@@ -74,7 +82,7 @@ def send_telegram_photo(photo, caption: str, chat_id: Optional[str] = None, conf
                 "chat_id": target_chat_id,
                 "photo": str(photo),
                 "caption": caption,
-                "parse_mode": "Markdown"
+                "parse_mode": parse_mode
             }
             response = requests.post(url, json=payload, timeout=10)
 
@@ -161,8 +169,24 @@ class TelegramBotProxy:
     def __init__(self, poller):
         self.poller = poller
 
-    def send_photo(self, chat_id: str, photo, caption: str) -> bool:
-        return send_telegram_photo(photo, caption, chat_id=chat_id, config=self.poller.config)
+    def send_photo(self, chat_id: str, photo, caption: str, parse_mode: str = "Markdown") -> bool:
+        import io
+        if isinstance(photo, str) and (photo.startswith("http://") or photo.startswith("https://")):
+            try:
+                logger.info("Downloading photo URL to local buffer inside TelegramBotProxy: %s", photo)
+                img_data = requests.get(photo, timeout=20).content
+                photo = io.BytesIO(img_data)
+                photo.name = 'image.jpg'
+            except Exception as e:
+                logger.error("Failed to download photo URL: %s", str(e))
+                return False
+        elif hasattr(photo, "read") or isinstance(photo, (io.BytesIO, io.BufferedReader)):
+            if not getattr(photo, "name", None):
+                try:
+                    photo.name = "image.jpg"
+                except Exception:
+                    pass
+        return send_telegram_photo(photo, caption, chat_id=chat_id, config=self.poller.config, parse_mode=parse_mode)
 
 class TelegramBotPoller:
     """
