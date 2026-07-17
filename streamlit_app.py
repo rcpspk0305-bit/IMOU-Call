@@ -5,6 +5,14 @@ import streamlit as st
 import plotly.express as px
 from supabase import create_client, Client
 
+# Monkeypatch st.metric to support key tag tracking (which allows unique layout tree identification) 
+# and safely strip it before invoking Streamlit's native st.metric to avoid a TypeError.
+_original_metric = st.metric
+def _patched_metric(*args, **kwargs):
+    kwargs.pop("key", None)
+    return _original_metric(*args, **kwargs)
+st.metric = _patched_metric
+
 # Isolate absolute directory runtime path logic
 current_dir = os.path.abspath(os.path.dirname(__file__))
 if current_dir not in sys.path:
@@ -147,6 +155,13 @@ if st.session_state["user"] is None:
                             st.error(f"Login process failed: {str(e)}")
     st.stop()
 
+# Inject hidden HTML meta block for cache-busting to advise the client browser engine
+# to dynamically validate dynamic script modules on every layout shift.
+st.components.v1.html(
+    '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">',
+    height=0
+)
+
 st.sidebar.markdown("### 👤 User Information")
 st.sidebar.write(f"Logged in as: **{st.session_state['user'].email}**")
 st.sidebar.button("🔐 Terminate Session (Sign Out)", on_click=handle_logout, use_container_width=True)
@@ -206,9 +221,9 @@ with right_col:
     total_alerts = len(logs_data)
     m_col1, m_col2 = st.columns(2)
     with m_col1:
-        st.metric("Monitoring State", "PAUSED" if db_paused else "ACTIVE")
+        st.metric("Monitoring State", "PAUSED" if db_paused else "ACTIVE", key="metric_monitoring_state")
     with m_col2:
-        st.metric("Recorded Alert Records (Last 100)", total_alerts)
+        st.metric("Recorded Alert Records (Last 100)", total_alerts, key="metric_alert_records")
 
     if logs_data:
         df = pd.DataFrame(logs_data)
@@ -248,7 +263,9 @@ if logs_data:
     st.dataframe(
         df_logs[["Device ID", "Event Type", "Time Stamp", "Exotel/Telegram Dispatched"]],
         column_config={"Time Stamp": st.column_config.TextColumn("Time Stamp"), "Exotel/Telegram Dispatched": st.column_config.CheckboxColumn("Exotel/Telegram Dispatched")},
-        width="stretch", hide_index=True
+        use_container_width=True,
+        hide_index=True,
+        key="dataframe_telemetry_logs"
     )
 else:
     st.info("No logs are currently stored in the database.")
