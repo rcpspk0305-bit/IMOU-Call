@@ -205,5 +205,24 @@ def test_polling_cycle_skips_when_session_inactive():
         assert res["reason"] == "inactive_session"
         mock_service.get_access_token.assert_not_called()
 
+@patch("app.imou_poller.app_lifecycle")
+@patch("app.imou_poller.time.sleep")
+def test_run_loop_exception_handling(mock_sleep, mock_lifecycle, capsys):
+    mock_lifecycle.is_running = True
+    poller = ImouPoller(device_id="CAM_TEST")
+    poller.poll_once = MagicMock(side_effect=RuntimeError("Database dropout"))
+    
+    def stop_loop(*args, **kwargs):
+        poller._stop_event.set()
+    mock_sleep.side_effect = stop_loop
+    
+    poller._run_loop()
+    
+    mock_sleep.assert_called_once_with(30)
+    captured = capsys.readouterr()
+    assert "Database dropout" in captured.out
+    assert "Error in Imou polling loop" in captured.out
+
+
 
 

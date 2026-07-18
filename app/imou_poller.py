@@ -481,7 +481,12 @@ class ImouPoller:
             try:
                 self.poll_once()
             except Exception as e:
+                import sys
+                print(f"Error in Imou polling loop: {type(e).__name__}: {e}", file=sys.stdout)
+                sys.stdout.flush()
                 logger.exception("Unexpected exception in Imou polling loop: %s", str(e))
+                time.sleep(30)
+                continue
             
             self._stop_event.wait(timeout=self.poll_interval_seconds)
         logger.info("Imou active polling thread stopped.")

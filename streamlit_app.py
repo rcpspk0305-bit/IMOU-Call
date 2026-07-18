@@ -27,15 +27,17 @@ import app.supabase_service
 import app.imou_poller
 import app.telegram_service
 
-def start_background_workers() -> bool:
-    try:
+@st.cache_resource
+def launch_persistent_production_daemons():
+    if app.imou_poller.imou_poller is not None:
+        app.imou_poller.imou_poller.daemon = True
         app.imou_poller.imou_poller.start()
+    if app.telegram_service.telegram_bot_poller is not None:
+        app.telegram_service.telegram_bot_poller.daemon = True
         app.telegram_service.telegram_bot_poller.start()
-        return True
-    except Exception:
-        return False
+    return True
 
-start_background_workers()
+launch_persistent_production_daemons()
 
 
 def format_to_ist_str(val) -> str:
